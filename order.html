@@ -19,24 +19,66 @@ main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
 .sub{font-size:13px;color:#b9cdd9}
 .hidden{display:none!important}
 
+/* タブ */
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tabs button{flex:1;height:44px;font-size:16px;background:#2c4152;color:#cfe3ee}
+.tabs button.active{background:#e8eef4;color:#13222f}
+
 /* 注文リスト */
 #listHead{display:flex;justify-content:space-between;align-items:center;font-weight:bold}
-#list{max-height:22vh;overflow-y:auto;margin-top:4px;font-size:14px}
-.group{color:#8fd3ff;font-size:12px;margin-top:6px}
-.item{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid #2c4152}
-.item .name{flex:1;min-width:0}
-.item .q{font-weight:bold;white-space:nowrap}
+#list{margin-top:4px;font-size:15px}
+.group{color:#8fd3ff;font-size:13px;font-weight:bold;margin-top:12px}
+/* 1行目に品名・包装、2行目の右側に数量とボタン */
+.item{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:8px 0;border-top:1px solid #2c4152}
+.item .name{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
+.item .q{font-weight:bold;font-size:20px;white-space:nowrap;margin-left:auto;margin-right:6px}
 .item.pending{color:#f7d794}
 .item.error{color:#ffb3b3}
-.item .tag{font-size:12px;margin-left:6px}
-.item button{height:28px;font-size:13px;padding:0 10px}
+.item.busy{opacity:.5}
+.item .tag{display:block;font-size:12px}
+.item button{height:40px;font-size:14px;padding:0 10px;flex:none}
+.item button.edit{background:#c9d6e2}
+.item button.del{background:#f3c4c4;color:#7f1d1d;width:44px;font-size:18px;margin-left:6px}
+
+/* 数量編集・確認の画面 */
+.modal{
+ position:fixed;inset:0;z-index:5;
+ background:#000b;
+ display:flex;align-items:flex-end;justify-content:center;
+}
+.modal .card{width:100%;max-width:640px;margin:0;border-radius:16px 16px 0 0;padding:14px 12px 20px}
+#editName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
+#editQty{font-size:36px;font-weight:bold}
+#editOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
+.row2{display:flex;gap:8px;margin-top:14px}
+.row2 button{flex:1;height:56px;font-size:18px}
+
+#orderBtn{width:100%;height:64px;margin-top:4px;background:#2563eb;color:#fff;font-size:20px}
+#orderSummary div{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #2c4152;font-size:16px}
+#orderBusy{
+ position:fixed;inset:0;z-index:7;
+ background:#000c;
+ display:flex;flex-direction:column;align-items:center;justify-content:center;
+ font-size:18px;font-weight:bold;text-align:center;padding:20px;
+}
+
+#undoBar{
+ position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:6;
+ width:92%;max-width:600px;
+ display:flex;align-items:center;gap:10px;
+ background:#334155;color:#fff;
+ padding:10px 12px;border-radius:12px;
+ box-shadow:0 4px 16px #0008;
+}
+#undoBar span{flex:1;font-size:14px}
+#undoBar button{height:40px;font-size:15px;padding:0 14px;background:#f7d794}
 
 /* カメラ（読み取った商品はカメラの上に重ねて表示） */
 .camera{
  position:relative;
  width:100%;
  aspect-ratio:16/9;
- max-height:30vh;
+ max-height:38vh;
  background:#000;
  border-radius:12px;
  overflow:hidden;
@@ -126,14 +168,24 @@ button:disabled{opacity:.35}
 </div>
 
 <main>
-  <section class="card">
-    <div id="listHead">
-      <span id="listTitle">注文リスト</span>
-      <button id="reload" class="word" style="height:34px;padding:0 14px;font-size:14px">更新</button>
-    </div>
-    <div id="list"></div>
-  </section>
+  <nav class="tabs">
+    <button id="tabScan" class="active">スキャン</button>
+    <button id="tabList">注文リスト</button>
+  </nav>
 
+  <div id="listPage" class="hidden">
+    <section class="card">
+      <div id="listHead">
+        <span id="listTitle">注文リスト</span>
+        <button id="reload" class="word" style="height:34px;padding:0 14px;font-size:14px">更新</button>
+      </div>
+      <div id="list"></div>
+    </section>
+    <button id="orderBtn">発注する（FAX用PDFを作成）</button>
+    <div id="orderMsg" class="sub" style="margin-top:6px"></div>
+  </div>
+
+  <div id="scanPage">
   <div class="camera" id="camera">
     <video id="video" autoplay playsinline muted></video>
     <div id="camMsg">カメラを準備しています…</div>
@@ -154,7 +206,62 @@ button:disabled{opacity:.35}
   <div class="keys" id="keys"></div>
   <button id="ok">確定</button>
   <div id="msg" class="sub"></div>
+  </div>
 </main>
+
+<!-- 数量の編集 -->
+<div id="editModal" class="modal hidden">
+  <div class="card">
+    <div class="sub" id="editSupplier"></div>
+    <div id="editName"></div>
+    <div class="sub" id="editPack"></div>
+    <div class="qtyRow">
+      <span class="sub">数量を変更（今は <span id="editNow"></span>）</span>
+      <span id="editQty"></span>
+    </div>
+    <div class="keys" id="editKeys"></div>
+    <button id="editOk">変更する</button>
+    <div id="editMsg" class="sub" style="margin-top:6px;color:#ffb3b3"></div>
+  </div>
+</div>
+
+<!-- 削除の確認 -->
+<div id="confirmModal" class="modal hidden">
+  <div class="card">
+    <div id="confirmText" style="font-size:17px;font-weight:bold;overflow-wrap:anywhere"></div>
+    <div class="sub" style="margin-top:6px">シートの行は消さず「取消」にします。</div>
+    <div class="row2">
+      <button id="confirmNo" class="word">やめる</button>
+      <button id="confirmYes" class="cancel">外す</button>
+    </div>
+  </div>
+</div>
+
+<!-- 発注の確認・結果 -->
+<div id="orderModal" class="modal hidden">
+  <div class="card">
+    <div id="orderTitle" style="font-size:18px;font-weight:bold">発注しますか？</div>
+    <div id="orderSummary" style="margin-top:8px"></div>
+    <div id="orderNote" class="sub" style="margin-top:8px;white-space:pre-wrap"></div>
+    <div class="row2" id="orderAsk">
+      <button id="orderNo" class="word">やめる</button>
+      <button id="orderYes" style="background:#2563eb;color:#fff">発注する</button>
+    </div>
+    <div class="row2 hidden" id="orderDone">
+      <button id="orderClose" class="word">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div id="orderBusy" class="hidden">
+  <div>PDFを作成しています…</div>
+  <div class="sub" style="margin-top:8px">卸の数によって30秒〜1分ほどかかります。<br>画面を閉じずにお待ちください。</div>
+</div>
+
+<div id="undoBar" class="hidden">
+  <span id="undoText"></span>
+  <button id="undoBtn">元に戻す</button>
+</div>
 
 <div id="toast"></div>
 <canvas id="canvas" hidden></canvas>
@@ -196,6 +303,9 @@ let serverRows = [];  // GASから取得した未送信の注文
 let queue = loadQueue();
 let sending = false;
 let retryTimer = null;
+let activeTab = 'scan';
+let editing = null;   // { row, qty, touched }
+const busyIds = new Set();  // 編集・削除の通信中の注文
 
 /* ---------- 共通 ---------- */
 
@@ -247,7 +357,7 @@ function apiError(text, retry) {
   return e;
 }
 
-async function api(action, params) {
+async function api(action, params, timeoutMs) {
   const pass = storageGet(PASS_KEY);
   if (!pass) {
     showPass();
@@ -255,7 +365,7 @@ async function api(action, params) {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs || 30000);
   let res;
 
   try {
@@ -434,6 +544,8 @@ function renderList() {
   const waiting = queue.filter(j => j.status === 'pending').length;
   $('listTitle').textContent = '注文リスト（' + rows.length + '件' +
     (waiting ? '・送信中 ' + waiting : '') + '）';
+  $('tabList').textContent = '注文リスト（' + rows.length + '）';
+  updateOrderButton();
 
   const list = $('list');
   list.replaceChildren();
@@ -457,7 +569,8 @@ function renderList() {
 
     rows.filter(r => r.supplier === s).forEach(r => {
       const item = document.createElement('div');
-      item.className = 'item' + (r.kind ? ' ' + r.kind : '');
+      const busy = Boolean(r.id && busyIds.has(r.id));
+      item.className = 'item' + (r.kind ? ' ' + r.kind : '') + (busy ? ' busy' : '');
 
       const name = document.createElement('span');
       name.className = 'name';
@@ -480,6 +593,22 @@ function renderList() {
         close.textContent = '閉じる';
         close.onclick = () => dismissJob(r.requestId);
         item.appendChild(close);
+      } else if (!r.kind) {
+        // 登録が済んだ注文だけ、編集・削除できる
+        const edit = document.createElement('button');
+        edit.className = 'edit';
+        edit.textContent = '編集';
+        edit.disabled = busy;
+        edit.onclick = () => openEdit(r);
+
+        const del = document.createElement('button');
+        del.className = 'del';
+        del.textContent = '🗑';
+        del.setAttribute('aria-label', '削除');
+        del.disabled = busy;
+        del.onclick = () => askDelete(r);
+
+        item.append(edit, del);
       }
       list.appendChild(item);
     });
@@ -568,7 +697,7 @@ function visibleArea(video) {
 }
 
 async function scanFrame() {
-  if (state !== 'scan' || frameBusy || !stream) return;
+  if (activeTab !== 'scan' || state !== 'scan' || frameBusy || !stream) return;
   const video = $('video');
   if (video.readyState < 2 || !video.videoWidth) return;
 
@@ -728,6 +857,243 @@ function pressOk() {
   processQueue();
 }
 
+/* ---------- タブ ---------- */
+
+function showTab(tab) {
+  activeTab = tab;
+  $('scanPage').classList.toggle('hidden', tab !== 'scan');
+  $('listPage').classList.toggle('hidden', tab !== 'list');
+  $('tabScan').classList.toggle('active', tab === 'scan');
+  $('tabList').classList.toggle('active', tab === 'list');
+  if (tab === 'list') loadList();
+}
+
+$('tabScan').onclick = () => showTab('scan');
+$('tabList').onclick = () => showTab('list');
+
+/* ---------- 発注（卸ごとのPDFを作り、印刷用フォルダに保存） ---------- */
+
+let ordering = false;
+
+function updateOrderButton() {
+  const waiting = queue.some(j => j.status === 'pending');
+  $('orderBtn').disabled = ordering || !serverRows.length || waiting || busyIds.size > 0;
+  $('orderMsg').textContent = waiting
+    ? '送信中の登録があります。送信が終わると発注できます。'
+    : '';
+}
+
+function openOrder() {
+  if (!serverRows.length) return;
+
+  const suppliers = [];
+  serverRows.forEach(r => { if (!suppliers.includes(r.supplier)) suppliers.push(r.supplier); });
+
+  $('orderTitle').textContent = '発注しますか？';
+  const box = $('orderSummary');
+  box.replaceChildren();
+  suppliers.forEach(s => {
+    const n = serverRows.filter(r => r.supplier === s).length;
+    const line = document.createElement('div');
+    const name = document.createElement('span');
+    name.textContent = s;
+    const count = document.createElement('span');
+    count.textContent = n + '品目';
+    line.append(name, count);
+    box.appendChild(line);
+  });
+  $('orderNote').textContent =
+    '卸ごとのFAX発注書（PDF）を印刷用フォルダに保存します。\n' +
+    '保存した品目は「発注済」になり、注文リストから消えます。';
+  $('orderAsk').classList.remove('hidden');
+  $('orderDone').classList.add('hidden');
+  $('orderModal').classList.remove('hidden');
+}
+
+async function runOrder() {
+  if (ordering) return;
+  ordering = true;
+  const ids = serverRows.map(r => r.id);
+
+  $('orderModal').classList.add('hidden');
+  $('orderBusy').classList.remove('hidden');
+  updateOrderButton();
+
+  let title;
+  let note;
+  const box = $('orderSummary');
+  box.replaceChildren();
+
+  try {
+    const r = await api('order', { ids: ids }, 180000);
+    title = '発注書を作成しました';
+    r.suppliers.forEach(s => {
+      const line = document.createElement('div');
+      const name = document.createElement('span');
+      name.textContent = s.supplier + '（' + s.items + '品目）';
+      const files = document.createElement('span');
+      files.textContent = s.files.length + '枚';
+      line.append(name, files);
+      box.appendChild(line);
+    });
+    note = 'PDFを印刷用フォルダに保存しました。印刷されたかを確認してください。';
+  } catch (e) {
+    title = '発注できませんでした';
+    note = e.message + (e.retry
+      ? '\n\n通信が途中で切れた可能性があります。もう一度発注する前に、' +
+        '注文リストを更新し、印刷用フォルダにPDFが作られていないか確認してください。'
+      : '');
+  } finally {
+    ordering = false;
+    $('orderBusy').classList.add('hidden');
+  }
+
+  $('orderTitle').textContent = title;
+  $('orderNote').textContent = note;
+  $('orderAsk').classList.add('hidden');
+  $('orderDone').classList.remove('hidden');
+  $('orderModal').classList.remove('hidden');
+  loadList();
+}
+
+$('orderBtn').onclick = openOrder;
+$('orderNo').onclick = () => $('orderModal').classList.add('hidden');
+$('orderYes').onclick = runOrder;
+$('orderClose').onclick = () => $('orderModal').classList.add('hidden');
+
+/* ---------- 数量の編集 ---------- */
+
+function openEdit(row) {
+  editing = { row: row, qty: String(row.quantity), touched: false };
+  $('editSupplier').textContent = row.supplier;
+  $('editName').textContent = row.name;
+  $('editPack').textContent = row.pack;
+  $('editNow').textContent = row.quantity;
+  $('editMsg').textContent = '';
+  updateEdit();
+  $('editModal').classList.remove('hidden');
+}
+
+function closeEdit() {
+  editing = null;
+  $('editModal').classList.add('hidden');
+}
+
+function updateEdit() {
+  if (!editing) return;
+  $('editQty').textContent = editing.qty || '0';
+  $('editOk').disabled = !editing.qty || Number(editing.qty) === editing.row.quantity;
+}
+
+function editDigit(d) {
+  if (!editing) return;
+  if (!editing.touched) {     // 最初のキーで今の数量を置き換える
+    editing.qty = '';
+    editing.touched = true;
+  }
+  if (d === '0' && !editing.qty) return;
+  if (editing.qty.length >= MAX_DIGITS) return;
+  editing.qty += d;
+  updateEdit();
+}
+
+function editBack() {
+  if (!editing) return;
+  editing.touched = true;
+  editing.qty = editing.qty.slice(0, -1);
+  updateEdit();
+}
+
+async function saveEdit() {
+  if (!editing || !editing.qty) return;
+  const row = editing.row;
+  const quantity = Number(editing.qty);
+
+  $('editOk').disabled = true;
+  $('editMsg').textContent = '';
+  $('editOk').textContent = '変更しています…';
+  busyIds.add(row.id);
+  renderList();
+
+  try {
+    const r = await api('updateQuantity', { id: row.id, quantity: quantity });
+    serverRows.forEach(x => { if (x.id === row.id) x.quantity = r.quantity; });
+    closeEdit();
+    toast(row.name + ' を ' + r.quantity + ' に変更しました');
+  } catch (e) {
+    $('editMsg').textContent = '変更できませんでした：' + e.message;
+    $('editOk').disabled = false;
+    if (/リストを更新/.test(e.message)) loadList();
+  } finally {
+    $('editOk').textContent = '変更する';
+    busyIds.delete(row.id);
+    renderList();
+  }
+}
+
+/* ---------- 削除（シート上は「取消」にする） ---------- */
+
+let deleteTarget = null;
+let undoTimer = null;
+
+function askDelete(row) {
+  deleteTarget = row;
+  $('confirmText').textContent = row.name + '　' + row.pack + ' × ' + row.quantity +
+    ' を注文リストから外しますか？';
+  $('confirmModal').classList.remove('hidden');
+}
+
+$('confirmNo').onclick = () => {
+  deleteTarget = null;
+  $('confirmModal').classList.add('hidden');
+};
+
+$('confirmYes').onclick = async () => {
+  const row = deleteTarget;
+  deleteTarget = null;
+  $('confirmModal').classList.add('hidden');
+  if (!row) return;
+
+  busyIds.add(row.id);
+  renderList();
+  try {
+    await api('cancel', { id: row.id });
+    serverRows = serverRows.filter(x => x.id !== row.id);
+    showUndo(row);
+  } catch (e) {
+    toast('外せませんでした：' + e.message, true);
+    if (/リストを更新/.test(e.message)) loadList();
+  } finally {
+    busyIds.delete(row.id);
+    renderList();
+  }
+};
+
+function showUndo(row) {
+  $('undoText').textContent = row.name + ' を外しました';
+  $('undoBtn').disabled = false;
+  $('undoBtn').onclick = async () => {
+    $('undoBtn').disabled = true;
+    try {
+      await api('restore', { id: row.id });
+      hideUndo();
+      toast(row.name + ' を元に戻しました');
+      loadList();
+    } catch (e) {
+      $('undoBtn').disabled = false;
+      toast('元に戻せませんでした：' + e.message, true);
+    }
+  };
+  $('undoBar').classList.remove('hidden');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(hideUndo, 6000);
+}
+
+function hideUndo() {
+  clearTimeout(undoTimer);
+  $('undoBar').classList.add('hidden');
+}
+
 /* テンキーを作る */
 (function buildKeys() {
   const keys = $('keys');
@@ -759,6 +1125,34 @@ function pressOk() {
   keys.append(cancel, zero, back);
 })();
 
+/* 編集用のテンキー */
+(function buildEditKeys() {
+  const keys = $('editKeys');
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
+    const b = document.createElement('button');
+    b.textContent = d;
+    b.onclick = () => editDigit(d);
+    keys.appendChild(b);
+  });
+
+  const cancel = document.createElement('button');
+  cancel.className = 'word cancel';
+  cancel.textContent = 'キャンセル';
+  cancel.onclick = closeEdit;
+
+  const zero = document.createElement('button');
+  zero.textContent = '0';
+  zero.onclick = () => editDigit('0');
+
+  const back = document.createElement('button');
+  back.className = 'word';
+  back.textContent = '戻る';
+  back.onclick = editBack;
+
+  keys.append(cancel, zero, back);
+})();
+
+$('editOk').onclick = saveEdit;
 $('ok').onclick = pressOk;
 $('camStart').onclick = startCamera;
 
