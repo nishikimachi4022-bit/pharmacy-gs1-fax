@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>医薬品GS1発注</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;
+ background:#101d28;
+ color:#fff;
+ font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;
+ -webkit-user-select:none;
+ user-select:none;
+}
+main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
+.card{background:#1b2c3a;border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.sub{font-size:13px;color:#b9cdd9}
+.hidden{display:none!important}
+
+/* 注文リスト */
+#listHead{display:flex;justify-content:space-between;align-items:center;font-weight:bold}
+#list{max-height:22vh;overflow-y:auto;margin-top:4px;font-size:14px}
+.group{color:#8fd3ff;font-size:12px;margin-top:6px}
+.item{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid #2c4152}
+.item span:first-child{flex:1;min-width:0}
+.item .q{font-weight:bold;white-space:nowrap}
+
+/* カメラ */
+.camera{
+ position:relative;
+ width:100%;
+ aspect-ratio:16/9;
+ max-height:28vh;
+ background:#000;
+ border-radius:12px;
+ overflow:hidden;
+}
+video{width:100%;height:100%;object-fit:cover}
+.guide{
+ position:absolute;
+ top:22%;left:6%;
+ width:88%;height:56%;
+ border:3px solid #55efc4;
+ border-radius:10px;
+ pointer-events:none;
+}
+.camera.paused .guide{border-color:#f7b731}
+#camMsg{
+ position:absolute;left:0;right:0;bottom:6px;
+ text-align:center;font-size:13px;
+ text-shadow:0 0 4px #000,0 0 4px #000;
+}
+
+/* 商品・数量 */
+#product{margin-top:8px;min-height:78px}
+#product.ok{background:#14532d}
+#product.ng{background:#7f1d1d}
+#pName{font-size:18px;font-weight:bold;line-height:1.35;overflow-wrap:anywhere}
+.qtyRow{display:flex;justify-content:space-between;align-items:baseline;margin:2px 4px 6px}
+#qty{font-size:34px;font-weight:bold}
+
+/* テンキー */
+.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+button{
+ font:inherit;
+ border:0;
+ border-radius:10px;
+ height:46px;
+ font-size:24px;
+ font-weight:bold;
+ background:#e8eef4;
+ color:#13222f;
+ touch-action:manipulation;
+}
+button.word{font-size:16px;background:#c9d6e2}
+button.cancel{background:#f3c4c4;color:#7f1d1d}
+#ok{width:100%;margin-top:6px;background:#16a17f;color:#fff;font-size:20px}
+button:disabled{opacity:.35}
+#msg{min-height:20px;margin-top:8px;white-space:pre-wrap}
+#msg.error{color:#ffb3b3}
+
+#toast{
+ position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+ max-width:92%;
+ background:#16a17f;color:#fff;font-weight:bold;
+ padding:12px 16px;border-radius:12px;
+ box-shadow:0 4px 16px #0008;
+ transition:opacity .3s;
+ opacity:0;pointer-events:none;
+}
+#toast.show{opacity:1}
+
+/* 合言葉 */
+#passScreen{
+ position:fixed;inset:0;z-index:10;
+ background:#101d28;
+ display:flex;align-items:center;justify-content:center;
+ padding:20px;
+}
+#passScreen input{
+ font:inherit;font-size:18px;
+ width:100%;padding:12px;margin:10px 0;
+ border-radius:10px;border:1px solid #adbcc6;
+}
+</style>
+</head>
+<body>
+
+<div id="passScreen" class="hidden">
+  <div class="card" style="width:100%;max-width:420px">
+    <div style="font-weight:bold;font-size:18px">合言葉を入力してください</div>
+    <div class="sub">この端末に記憶されます。最初の1回だけ必要です。</div>
+    <input id="passInput" type="password" autocomplete="off">
+    <button id="passSave" style="width:100%;background:#16a17f;color:#fff;font-size:18px">保存</button>
+    <div id="passMsg" class="sub" style="margin-top:8px"></div>
+  </div>
+</div>
+
+<main>
+  <section class="card">
+    <div id="listHead">
+      <span id="listTitle">注文リスト</span>
+      <button id="reload" class="word" style="height:34px;padding:0 14px;font-size:14px">更新</button>
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <div class="camera" id="camera">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="guide"></div>
+    <div id="camMsg">カメラを準備しています…</div>
+  </div>
+  <!-- カメラが自動で起動できなかったときだけ表示 -->
+  <button id="camStart" class="hidden" style="width:100%;margin-top:6px;font-size:18px">カメラを開始</button>
+
+  <section class="card" id="product">
+    <div class="sub" id="pCode"></div>
+    <div id="pName">バーコードを枠に合わせてください</div>
+    <div class="sub" id="pSub"></div>
+  </section>
+
+  <div class="qtyRow">
+    <span class="sub">数量</span>
+    <span id="qty">0</span>
+  </div>
+  <div class="keys" id="keys"></div>
+  <button id="ok">確定</button>
+  <div id="msg" class="sub"></div>
+</main>
+
+<div id="toast"></div>
+<canvas id="canvas" hidden></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.5/dist/iife/reader/index.js"></script>
+<script>
+"use strict";
+
+// ↓ GASの「新しいデプロイ」のURLに書き換える
+const GAS_URL = 'ここにGASのウェブアプリURLを貼り付け';
+
+const PASS_KEY = 'gs1order.passcode';
+const SCAN_MS = 250;           // 読み取りの間隔
+const CONFIRM_MS = 1500;       // この時間内に同じコードを2回読めたら採用
+const COOLDOWN_MS = 4000;      // 確定直後に同じコードを無視する時間
+const MAX_DIGITS = 4;          // 数量は 1〜9999
+
+const $ = id => document.getElementById(id);
+
+let stream = null;
+let timer = null;
+let frameBusy = false;
+
+// scan：読み取り中 / lookup：照合中 / input：数量入力 / sending：登録中
+let state = 'scan';
+let current = null;  // { gtin, product, requestId, sent }
+let qty = '';
+let firstHit = { code: '', time: 0 };
+let recent = { code: '', time: 0 };
+
+/* ---------- 共通 ---------- */
+
+function storageGet(key) {
+  try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
+}
+
+function storageSet(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch (e) { /* 保存できない環境では毎回入力 */ }
+}
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' +
+    h.slice(16, 20) + '-' + h.slice(20);
+}
+
+function message(text, isError) {
+  $('msg').textContent = text || '';
+  $('msg').className = 'sub' + (isError ? ' error' : '');
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function vibrate(ms) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+/* ---------- GASとの通信 ---------- */
+
+async function api(action, params) {
+  if (!GAS_URL.startsWith('https://script.google.com/')) {
+    throw new Error('GAS_URL が設定されていません。');
+  }
+
+  const pass = storageGet(PASS_KEY);
+  if (!pass) {
+    showPass();
+    throw new Error('合言葉が設定されていません。');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  let res;
+
+  try {
+    // Content-Type を付けない（text/plain）ことで、GASへ直接送れる
+    res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify(Object.assign({ action: action, passcode: pass }, params || {})),
+      signal: controller.signal
+    });
+  } catch (e) {
+    throw new Error('通信できませんでした。電波の状態を確認してください。');
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  let json;
+  try {
+    json = await res.json();
+  } catch (e) {
+    throw new Error('GASの応答を読み取れません。デプロイの公開設定を確認してください。');
+  }
+
+  if (!json.ok) {
+    if (json.error === '合言葉が違います。') {
+      storageSet(PASS_KEY, '');
+      showPass('合言葉が違います。もう一度入力してください。');
+    }
+    throw new Error(json.error || 'エラーが発生しました。');
+  }
+
+  return json.data;
+}
+
+/* ---------- 合言葉 ---------- */
+
+function showPass(text) {
+  $('passMsg').textContent = text || '';
+  $('passInput').value = '';
+  $('passScreen').classList.remove('hidden');
+}
+
+$('passSave').onclick = () => {
+  const value = $('passInput').value.trim();
+  if (value.length < 8) {
+    $('passMsg').textContent = '8文字以上で入力してください。';
+    return;
+  }
+  storageSet(PASS_KEY, value);
+  $('passScreen').classList.add('hidden');
+  loadList();
+};
+
+/* ---------- 注文リスト ---------- */
+
+async function loadList() {
+  try {
+    renderList(await api('list'));
+  } catch (e) {
+    $('listTitle').textContent = '注文リスト（読み込めません）';
+    $('list').replaceChildren();
+  }
+}
+
+function renderList(rows) {
+  $('listTitle').textContent = '注文リスト（未送信 ' + rows.length + '件）';
+  const list = $('list');
+  list.replaceChildren();
+
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'sub';
+    empty.textContent = 'まだ登録はありません';
+    list.appendChild(empty);
+    return;
+  }
+
+  const suppliers = [];
+  rows.forEach(r => { if (!suppliers.includes(r.supplier)) suppliers.push(r.supplier); });
+
+  suppliers.forEach(s => {
+    const head = document.createElement('div');
+    head.className = 'group';
+    head.textContent = s;
+    list.appendChild(head);
+
+    rows.filter(r => r.supplier === s).forEach(r => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const name = document.createElement('span');
+      name.textContent = r.name + '　' + r.pack;
+      const q = document.createElement('span');
+      q.className = 'q';
+      q.textContent = '× ' + r.quantity;
+      item.append(name, q);
+      list.appendChild(item);
+    });
+  });
+}
+
+$('reload').onclick = loadList;
+
+/* ---------- GS1 → GTIN ---------- */
+
+function validGTIN(s) {
+  if (!/^\d{13,14}$/.test(s)) return false;
+  const a = [...s].map(Number);
+  const c = a.pop();
+  let sum = 0;
+  for (let i = a.length - 1, j = 0; i >= 0; i--, j++) {
+    sum += a[i] * (j % 2 === 0 ? 3 : 1);
+  }
+  return (10 - sum % 10) % 10 === c;
+}
+
+/** GS1全体（有効期限・ロット等を含む場合も）から (01) のGTINだけを取り出す */
+function extract(raw) {
+  const s = String(raw || '').trim().replace(/^\][A-Za-z0-9]{2}/, '');
+  const m = s.match(/\(01\)(\d{14})/) || s.match(/^01(\d{14})/);
+  const code = m ? m[1] : s;
+  if (!validGTIN(code)) return null;
+  return code.padStart(14, '0');
+}
+
+/* ---------- カメラ ---------- */
+
+function setPaused(paused) {
+  $('camera').classList.toggle('paused', paused);
+  $('camMsg').textContent = paused
+    ? '読み取りを一時停止しています'
+    : 'GS1コードを枠に合わせてください';
+}
+
+async function startCamera() {
+  if (stream) return;
+  try {
+    if (!window.ZXingWASM || !ZXingWASM.readBarcodes) {
+      throw new Error('読み取りの部品を読み込めません。通信状態を確認してください。');
+    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+    const video = $('video');
+    video.srcObject = stream;
+    await video.play();
+    $('camStart').classList.add('hidden');
+    timer = setInterval(scanFrame, SCAN_MS);
+    setPaused(state !== 'scan');
+  } catch (e) {
+    stopCamera();
+    const denied = e && e.name === 'NotAllowedError';
+    $('camMsg').textContent = denied
+      ? 'カメラの使用が許可されていません'
+      : 'カメラを起動できません：' + e.message;
+    $('camStart').classList.remove('hidden');
+  }
+}
+
+function stopCamera() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  $('video').srcObject = null;
+}
+
+async function scanFrame() {
+  if (state !== 'scan' || frameBusy || !stream) return;
+  const video = $('video');
+  if (video.readyState < 2 || !video.videoWidth) return;
+
+  frameBusy = true;
+  try {
+    const canvas = $('canvas');
+    const width = Math.min(video.videoWidth, 1280);
+    canvas.width = width;
+    canvas.height = Math.round(video.videoHeight * width / video.videoWidth);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const results = await ZXingWASM.readBarcodes(
+      ctx.getImageData(0, 0, canvas.width, canvas.height),
+      {
+        formats: ['DataBar', 'DataBarLtd', 'DataBarExp', 'DataBarExpStk', 'DataMatrix', 'EAN13'],
+        tryHarder: true,
+        tryInvert: true,
+        maxNumberOfSymbols: 2
+      }
+    );
+
+    for (const r of results) {
+      const gtin = extract(r.text);
+      if (gtin) {
+        onCode(gtin);
+        break;
+      }
+    }
+  } catch (e) {
+    $('camMsg').textContent = '読取エラー：' + e.message;
+  } finally {
+    frameBusy = false;
+  }
+}
+
+/** 誤読を防ぐため、同じコードを続けて2回読めたときだけ採用する */
+function onCode(gtin) {
+  if (state !== 'scan') return;
+  const now = Date.now();
+
+  if (gtin === recent.code && now - recent.time < COOLDOWN_MS) return;
+
+  if (gtin !== firstHit.code || now - firstHit.time > CONFIRM_MS) {
+    firstHit = { code: gtin, time: now };
+    return;
+  }
+
+  firstHit = { code: '', time: 0 };
+  lookup(gtin);
+}
+
+/* ---------- 照合・入力・登録 ---------- */
+
+function showProduct(kind, name, code, sub) {
+  $('product').className = 'card' + (kind ? ' ' + kind : '');
+  $('pName').textContent = name;
+  $('pCode').textContent = code;
+  $('pSub').textContent = sub;
+}
+
+function updateView() {
+  $('qty').textContent = qty || '0';
+  const canInput = state === 'input' && current && current.product && !current.sent;
+  document.querySelectorAll('#keys button[data-digit], #back').forEach(b => {
+    b.disabled = !canInput;
+  });
+  $('cancel').disabled = state === 'scan' || state === 'sending';
+  $('ok').disabled = !(state === 'input' && current && current.product && qty);
+}
+
+async function lookup(gtin) {
+  state = 'lookup';
+  setPaused(true);
+  vibrate(80);
+  const ticket = current = { gtin: gtin, product: null, requestId: uuid(), sent: false };
+  qty = '';
+  message('');
+  showProduct('', '照合しています…', 'GTIN ' + gtin, '');
+  updateView();
+
+  try {
+    const p = await api('lookup', { gtin: gtin });
+    if (current !== ticket) return; // 照合中にキャンセルされた
+
+    if (!p.found) {
+      showProduct('ng', '未登録のコードです', 'GTIN ' + gtin,
+        '医薬品マスタにありません。発注できません。キャンセルして読み直してください。');
+    } else {
+      ticket.product = p;
+      showProduct('ok', p.name, 'GTIN ' + p.gtin + '　卸：' + p.supplier,
+        p.pack + (p.maker ? '　' + p.maker : ''));
+      message('品名・包装・卸名を確認して、数量を入力してください。');
+    }
+  } catch (e) {
+    if (current !== ticket) return;
+    showProduct('ng', '照合できませんでした', 'GTIN ' + gtin, e.message);
+  }
+
+  state = 'input';
+  updateView();
+}
+
+function backToScan() {
+  current = null;
+  qty = '';
+  state = 'scan';
+  showProduct('', 'バーコードを枠に合わせてください', '', '');
+  setPaused(false);
+  updateView();
+}
+
+function pressDigit(d) {
+  if (state !== 'input' || !current || !current.product || current.sent) return;
+  if (d === '0' && !qty) return;           // 先頭に0は入れない
+  if (qty.length >= MAX_DIGITS) return;
+  qty += d;
+  updateView();
+}
+
+function pressBack() {
+  if (state !== 'input' || !current || current.sent) return;
+  qty = qty.slice(0, -1);
+  updateView();
+}
+
+function pressCancel() {
+  if (state === 'sending' || state === 'scan') return;
+  const wasSent = current && current.sent;
+  backToScan();
+  if (wasSent) {
+    message('前回の登録が保存されたか、注文リストで確認してください。', true);
+    loadList();
+  } else {
+    message('');
+  }
+}
+
+async function pressOk() {
+  if (state !== 'input' || !current || !current.product || !qty) return;
+  const ticket = current;
+  const quantity = Number(qty);
+
+  state = 'sending';
+  ticket.sent = true;  // 送信後は数量を変えられない（再送で内容が変わらないように）
+  updateView();
+  message('登録しています…');
+
+  try {
+    const r = await api('register', {
+      gtin: ticket.product.gtin,
+      quantity: quantity,
+      requestId: ticket.requestId
+    });
+    recent = { code: ticket.gtin, time: Date.now() };
+    vibrate(60);
+    toast('登録しました：' + r.name + ' × ' + r.quantity + (r.duplicate ? '（登録済み）' : ''));
+    message('');
+    backToScan();
+    loadList();
+  } catch (e) {
+    state = 'input';
+    updateView();
+    message('登録できませんでした：' + e.message +
+      '\nもう一度「確定」を押すと再送します（二重には登録されません）。', true);
+  }
+}
+
+/* テンキーを作る */
+(function buildKeys() {
+  const keys = $('keys');
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
+    const b = document.createElement('button');
+    b.textContent = d;
+    b.dataset.digit = d;
+    b.onclick = () => pressDigit(d);
+    keys.appendChild(b);
+  });
+
+  const cancel = document.createElement('button');
+  cancel.id = 'cancel';
+  cancel.className = 'word cancel';
+  cancel.textContent = 'キャンセル';
+  cancel.onclick = pressCancel;
+
+  const zero = document.createElement('button');
+  zero.textContent = '0';
+  zero.dataset.digit = '0';
+  zero.onclick = () => pressDigit('0');
+
+  const back = document.createElement('button');
+  back.id = 'back';
+  back.className = 'word';
+  back.textContent = '戻る';
+  back.onclick = pressBack;
+
+  keys.append(cancel, zero, back);
+})();
+
+$('ok').onclick = pressOk;
+$('camStart').onclick = startCamera;
+
+/* 画面を離れたらカメラを止め、戻ったら再開する */
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopCamera();
+  else startCamera();
+});
+window.addEventListener('pagehide', stopCamera);
+
+/* 起動 */
+updateView();
+if (!GAS_URL.startsWith('https://script.google.com/')) {
+  message('GAS_URL が設定されていません。order.html の GAS_URL を書き換えてください。', true);
+} else if (!storageGet(PASS_KEY)) {
+  showPass();
+} else {
+  loadList();
+}
+startCamera();
+</script>
+</body>
+</html>
