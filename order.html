@@ -24,50 +24,49 @@ main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
 #list{max-height:22vh;overflow-y:auto;margin-top:4px;font-size:14px}
 .group{color:#8fd3ff;font-size:12px;margin-top:6px}
 .item{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-top:1px solid #2c4152}
-.item span:first-child{flex:1;min-width:0}
+.item .name{flex:1;min-width:0}
 .item .q{font-weight:bold;white-space:nowrap}
+.item.pending{color:#f7d794}
+.item.error{color:#ffb3b3}
+.item .tag{font-size:12px;margin-left:6px}
+.item button{height:28px;font-size:13px;padding:0 10px}
 
-/* カメラ */
+/* カメラ（読み取った商品はカメラの上に重ねて表示） */
 .camera{
  position:relative;
  width:100%;
  aspect-ratio:16/9;
- max-height:28vh;
+ max-height:30vh;
  background:#000;
  border-radius:12px;
  overflow:hidden;
 }
 video{width:100%;height:100%;object-fit:cover}
-.guide{
- position:absolute;
- top:22%;left:6%;
- width:88%;height:56%;
- border:3px solid #55efc4;
- border-radius:10px;
- pointer-events:none;
-}
-.camera.paused .guide{border-color:#f7b731}
 #camMsg{
  position:absolute;left:0;right:0;bottom:6px;
  text-align:center;font-size:13px;
  text-shadow:0 0 4px #000,0 0 4px #000;
 }
+#overlay{
+ position:absolute;inset:0;
+ padding:10px 12px;
+ display:flex;flex-direction:column;justify-content:center;
+ background:#14532df2;
+}
+#overlay.ng{background:#7f1d1df2}
+#pName{font-size:19px;font-weight:bold;line-height:1.3;overflow-wrap:anywhere}
+#pSub,#pCode{font-size:13px;color:#e3f1e8;overflow-wrap:anywhere}
+#pSupplier{font-size:16px;font-weight:bold;margin-top:4px}
 
-/* 商品・数量 */
-#product{margin-top:8px;min-height:78px}
-#product.ok{background:#14532d}
-#product.ng{background:#7f1d1d}
-#pName{font-size:18px;font-weight:bold;line-height:1.35;overflow-wrap:anywhere}
-.qtyRow{display:flex;justify-content:space-between;align-items:baseline;margin:2px 4px 6px}
-#qty{font-size:34px;font-weight:bold}
-
-/* テンキー */
+/* 数量・テンキー */
+.qtyRow{display:flex;justify-content:space-between;align-items:baseline;margin:4px 4px 6px}
+#qty{font-size:36px;font-weight:bold}
 .keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 button{
  font:inherit;
  border:0;
  border-radius:10px;
- height:46px;
+ height:48px;
  font-size:24px;
  font-weight:bold;
  background:#e8eef4;
@@ -76,13 +75,20 @@ button{
 }
 button.word{font-size:16px;background:#c9d6e2}
 button.cancel{background:#f3c4c4;color:#7f1d1d}
-#ok{width:100%;margin-top:6px;background:#16a17f;color:#fff;font-size:20px}
+#ok{
+ width:100%;
+ height:76px;
+ margin-top:8px;
+ background:#16a17f;
+ color:#fff;
+ font-size:28px;
+}
 button:disabled{opacity:.35}
 #msg{min-height:20px;margin-top:8px;white-space:pre-wrap}
 #msg.error{color:#ffb3b3}
 
 #toast{
- position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+ position:fixed;left:50%;top:12px;transform:translateX(-50%);
  max-width:92%;
  background:#16a17f;color:#fff;font-weight:bold;
  padding:12px 16px;border-radius:12px;
@@ -91,6 +97,7 @@ button:disabled{opacity:.35}
  opacity:0;pointer-events:none;
 }
 #toast.show{opacity:1}
+#toast.warn{background:#b45309}
 
 /* 合言葉 */
 #passScreen{
@@ -129,21 +136,20 @@ button:disabled{opacity:.35}
 
   <div class="camera" id="camera">
     <video id="video" autoplay playsinline muted></video>
-    <div class="guide"></div>
     <div id="camMsg">カメラを準備しています…</div>
+    <div id="overlay" class="hidden">
+      <div id="pCode"></div>
+      <div id="pName"></div>
+      <div id="pSub"></div>
+      <div id="pSupplier"></div>
+    </div>
   </div>
   <!-- カメラが自動で起動できなかったときだけ表示 -->
   <button id="camStart" class="hidden" style="width:100%;margin-top:6px;font-size:18px">カメラを開始</button>
 
-  <section class="card" id="product">
-    <div class="sub" id="pCode"></div>
-    <div id="pName">バーコードを枠に合わせてください</div>
-    <div class="sub" id="pSub"></div>
-  </section>
-
   <div class="qtyRow">
     <span class="sub">数量</span>
-    <span id="qty">0</span>
+    <span id="qty">-</span>
   </div>
   <div class="keys" id="keys"></div>
   <button id="ok">確定</button>
@@ -157,13 +163,17 @@ button:disabled{opacity:.35}
 <script>
 "use strict";
 
-// ↓ GASの「新しいデプロイ」のURLに書き換える
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyMEBbzk9K3sqllJAZlFyO7ApxI_p7s5lLFWg1as5mmtBAT1Zy-gWTL689cIRUyWATF/exec';
+// GASのウェブアプリURL
+const GAS_URL =
+  'https://script.google.com/macros/s/AKfycbyMEBbzk9K3sqllJAZlFyO7ApxI_p7s5lLFWg1as5mmtBAT1Zy-gWTL689cIRUyWATF/exec';
 
 const PASS_KEY = 'gs1order.passcode';
-const SCAN_MS = 250;           // 読み取りの間隔
+const QUEUE_KEY = 'gs1order.queue';
+const SCAN_MS = 200;           // 読み取りの間隔
 const CONFIRM_MS = 1500;       // この時間内に同じコードを2回読めたら採用
 const COOLDOWN_MS = 4000;      // 確定直後に同じコードを無視する時間
+const RETRY_MS = 5000;         // 通信失敗時の再送間隔
+const MASTER_REFRESH_MS = 30 * 60 * 1000;  // マスタの再読み込み間隔
 const MAX_DIGITS = 4;          // 数量は 1〜9999
 
 const $ = id => document.getElementById(id);
@@ -172,12 +182,20 @@ let stream = null;
 let timer = null;
 let frameBusy = false;
 
-// scan：読み取り中 / lookup：照合中 / input：数量入力 / sending：登録中
+// scan：読み取り中 / input：数量入力
 let state = 'scan';
-let current = null;  // { gtin, product, requestId, sent }
+let current = null;   // { gtin, product, requestId }
 let qty = '';
+let qtyTouched = false;
 let firstHit = { code: '', time: 0 };
 let recent = { code: '', time: 0 };
+
+let master = null;    // Map: GTIN → 商品
+let masterDup = new Set();
+let serverRows = [];  // GASから取得した未送信の注文
+let queue = loadQueue();
+let sending = false;
+let retryTimer = null;
 
 /* ---------- 共通 ---------- */
 
@@ -208,12 +226,12 @@ function message(text, isError) {
 }
 
 let toastTimer = null;
-function toast(text) {
+function toast(text, warn) {
   const el = $('toast');
   el.textContent = text;
-  el.classList.add('show');
+  el.className = 'show' + (warn ? ' warn' : '');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+  toastTimer = setTimeout(() => { el.className = warn ? 'warn' : ''; }, warn ? 5000 : 2000);
 }
 
 function vibrate(ms) {
@@ -222,19 +240,22 @@ function vibrate(ms) {
 
 /* ---------- GASとの通信 ---------- */
 
-async function api(action, params) {
-  if (!GAS_URL.startsWith('https://script.google.com/')) {
-    throw new Error('GAS_URL が設定されていません。');
-  }
+/** retry が true のエラーは、時間をおいて再送してよいもの */
+function apiError(text, retry) {
+  const e = new Error(text);
+  e.retry = retry;
+  return e;
+}
 
+async function api(action, params) {
   const pass = storageGet(PASS_KEY);
   if (!pass) {
     showPass();
-    throw new Error('合言葉が設定されていません。');
+    throw apiError('合言葉が設定されていません。', false);
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
   let res;
 
   try {
@@ -245,7 +266,7 @@ async function api(action, params) {
       signal: controller.signal
     });
   } catch (e) {
-    throw new Error('通信できませんでした。電波の状態を確認してください。');
+    throw apiError('通信できませんでした。', true);
   } finally {
     clearTimeout(timeout);
   }
@@ -254,7 +275,7 @@ async function api(action, params) {
   try {
     json = await res.json();
   } catch (e) {
-    throw new Error('GASの応答を読み取れません。デプロイの公開設定を確認してください。');
+    throw apiError('GASの応答を読み取れません。', true);
   }
 
   if (!json.ok) {
@@ -262,7 +283,8 @@ async function api(action, params) {
       storageSet(PASS_KEY, '');
       showPass('合言葉が違います。もう一度入力してください。');
     }
-    throw new Error(json.error || 'エラーが発生しました。');
+    const busy = /少し待って/.test(json.error || '');
+    throw apiError(json.error || 'エラーが発生しました。', busy);
   }
 
   return json.data;
@@ -284,22 +306,135 @@ $('passSave').onclick = () => {
   }
   storageSet(PASS_KEY, value);
   $('passScreen').classList.add('hidden');
-  loadList();
+  startup();
 };
+
+/* ---------- 医薬品マスタ（スマホ側で照合するため） ---------- */
+
+async function loadMaster() {
+  try {
+    const data = await api('master');
+    const map = new Map();
+    data.items.forEach(r => {
+      map.set(r[0], { gtin: r[0], yj: r[1], name: r[2], pack: r[3], maker: r[4], supplier: r[5] });
+    });
+    master = map;
+    masterDup = new Set(data.duplicates || []);
+    if (state === 'scan') $('camMsg').textContent = '';
+  } catch (e) {
+    if (!master) $('camMsg').textContent = 'マスタを読み込めません（読み取り時にGASで照合します）';
+  }
+}
+
+/** スマホ側で照合する。マスタ未読み込みのときだけGASに問い合わせる */
+async function findLocal(gtin) {
+  if (!master) {
+    const p = await api('lookup', { gtin: gtin });
+    return p.found ? { product: p } : { error: p.message || '未登録のコードです' };
+  }
+  if (masterDup.has(gtin)) {
+    return { error: '医薬品マスタに同じGTINが複数あります。マスタを修正してください。' };
+  }
+  const p = master.get(gtin);
+  if (!p) return { error: '未登録のコードです。医薬品マスタにありません。' };
+  if (!p.name || !p.pack || !p.supplier) {
+    return { error: '医薬品名・包装規格・卸名のいずれかが空欄です。マスタを確認してください。' };
+  }
+  return { product: p };
+}
+
+/* ---------- 送信待ちの登録（画面を閉じても残す） ---------- */
+
+function loadQueue() {
+  try { return JSON.parse(storageGet(QUEUE_KEY) || '[]'); } catch (e) { return []; }
+}
+
+function saveQueue() {
+  storageSet(QUEUE_KEY, queue.length ? JSON.stringify(queue) : '');
+}
+
+async function processQueue() {
+  if (sending) return;
+  const job = queue.find(j => j.status === 'pending');
+  if (!job) return;
+
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  sending = true;
+  let waitRetry = false;
+  try {
+    const r = await api('register', {
+      gtin: job.gtin,
+      quantity: job.quantity,
+      requestId: job.requestId
+    });
+
+    queue = queue.filter(j => j !== job);
+    saveQueue();
+    serverRows = serverRows.filter(x => x.id !== r.id).concat([{
+      id: r.id, supplier: r.supplier, name: r.name, pack: r.pack, quantity: r.quantity
+    }]);
+
+    // 画面に出した内容と、登録時のマスタが違っていたら知らせる
+    if (r.name !== job.name || r.pack !== job.pack || r.supplier !== job.supplier) {
+      toast('マスタが変更されていました。登録内容：' + r.name + ' ' + r.pack + '（' + r.supplier + '）', true);
+    }
+  } catch (e) {
+    if (e.retry) {
+      waitRetry = true;  // 電波が悪いときなど。少し待って再送する
+      retryTimer = setTimeout(processQueue, RETRY_MS);
+    } else {
+      job.status = 'error';
+      job.error = e.message;
+      saveQueue();
+      toast('登録できませんでした：' + job.name, true);
+    }
+  } finally {
+    sending = false;
+    renderList();
+  }
+
+  if (waitRetry) return;
+  if (queue.some(j => j.status === 'pending')) {
+    processQueue();
+  } else if (!queue.length) {
+    loadList();
+  }
+}
+
+function dismissJob(requestId) {
+  queue = queue.filter(j => j.requestId !== requestId);
+  saveQueue();
+  renderList();
+}
 
 /* ---------- 注文リスト ---------- */
 
 async function loadList() {
   try {
-    renderList(await api('list'));
+    serverRows = await api('list');
   } catch (e) {
     $('listTitle').textContent = '注文リスト（読み込めません）';
-    $('list').replaceChildren();
+    return;
   }
+  renderList();
 }
 
-function renderList(rows) {
-  $('listTitle').textContent = '注文リスト（未送信 ' + rows.length + '件）';
+function renderList() {
+  // 送信中の登録も、リストに一緒に表示する
+  const rows = serverRows.map(r => Object.assign({ kind: '' }, r))
+    .concat(queue.map(j => ({
+      kind: j.status, supplier: j.supplier, name: j.name, pack: j.pack,
+      quantity: j.quantity, requestId: j.requestId, error: j.error
+    })));
+
+  const waiting = queue.filter(j => j.status === 'pending').length;
+  $('listTitle').textContent = '注文リスト（' + rows.length + '件' +
+    (waiting ? '・送信中 ' + waiting : '') + '）';
+
   const list = $('list');
   list.replaceChildren();
 
@@ -322,19 +457,40 @@ function renderList(rows) {
 
     rows.filter(r => r.supplier === s).forEach(r => {
       const item = document.createElement('div');
-      item.className = 'item';
+      item.className = 'item' + (r.kind ? ' ' + r.kind : '');
+
       const name = document.createElement('span');
+      name.className = 'name';
       name.textContent = r.name + '　' + r.pack;
+      if (r.kind) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = r.kind === 'pending' ? '送信中…' : '登録できませんでした：' + r.error;
+        name.appendChild(tag);
+      }
+
       const q = document.createElement('span');
       q.className = 'q';
       q.textContent = '× ' + r.quantity;
       item.append(name, q);
+
+      if (r.kind === 'error') {
+        const close = document.createElement('button');
+        close.className = 'word';
+        close.textContent = '閉じる';
+        close.onclick = () => dismissJob(r.requestId);
+        item.appendChild(close);
+      }
       list.appendChild(item);
     });
   });
 }
 
-$('reload').onclick = loadList;
+$('reload').onclick = () => {
+  loadList();
+  loadMaster();
+  processQueue();
+};
 
 /* ---------- GS1 → GTIN ---------- */
 
@@ -360,13 +516,6 @@ function extract(raw) {
 
 /* ---------- カメラ ---------- */
 
-function setPaused(paused) {
-  $('camera').classList.toggle('paused', paused);
-  $('camMsg').textContent = paused
-    ? '読み取りを一時停止しています'
-    : 'GS1コードを枠に合わせてください';
-}
-
 async function startCamera() {
   if (stream) return;
   try {
@@ -385,8 +534,8 @@ async function startCamera() {
     video.srcObject = stream;
     await video.play();
     $('camStart').classList.add('hidden');
+    $('camMsg').textContent = master ? '' : 'マスタを読み込んでいます…';
     timer = setInterval(scanFrame, SCAN_MS);
-    setPaused(state !== 'scan');
   } catch (e) {
     stopCamera();
     const denied = e && e.name === 'NotAllowedError';
@@ -407,6 +556,17 @@ function stopCamera() {
   $('video').srcObject = null;
 }
 
+/** 画面に映っている範囲（object-fit: cover で切り取られた部分）だけを解析する */
+function visibleArea(video) {
+  const box = video.getBoundingClientRect();
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const scale = Math.max(box.width / vw, box.height / vh);
+  const w = Math.min(vw, box.width / scale);
+  const h = Math.min(vh, box.height / scale);
+  return { x: (vw - w) / 2, y: (vh - h) / 2, w: w, h: h };
+}
+
 async function scanFrame() {
   if (state !== 'scan' || frameBusy || !stream) return;
   const video = $('video');
@@ -414,12 +574,13 @@ async function scanFrame() {
 
   frameBusy = true;
   try {
+    const area = visibleArea(video);
     const canvas = $('canvas');
-    const width = Math.min(video.videoWidth, 1280);
+    const width = Math.round(Math.min(area.w, 1280));
     canvas.width = width;
-    canvas.height = Math.round(video.videoHeight * width / video.videoWidth);
+    canvas.height = Math.round(area.h * width / area.w);
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, area.x, area.y, area.w, area.h, 0, 0, canvas.width, canvas.height);
 
     const results = await ZXingWASM.readBarcodes(
       ctx.getImageData(0, 0, canvas.width, canvas.height),
@@ -461,54 +622,52 @@ function onCode(gtin) {
   lookup(gtin);
 }
 
-/* ---------- 照合・入力・登録 ---------- */
+/* ---------- 照合・入力・確定 ---------- */
 
-function showProduct(kind, name, code, sub) {
-  $('product').className = 'card' + (kind ? ' ' + kind : '');
-  $('pName').textContent = name;
+function showOverlay(kind, code, name, sub, supplier) {
+  $('overlay').className = kind === 'ng' ? 'ng' : '';
   $('pCode').textContent = code;
+  $('pName').textContent = name;
   $('pSub').textContent = sub;
+  $('pSupplier').textContent = supplier;
 }
 
 function updateView() {
-  $('qty').textContent = qty || '0';
-  const canInput = state === 'input' && current && current.product && !current.sent;
+  $('qty').textContent = state === 'input' && current && current.product ? (qty || '0') : '-';
+  const canInput = state === 'input' && current && current.product;
   document.querySelectorAll('#keys button[data-digit], #back').forEach(b => {
     b.disabled = !canInput;
   });
-  $('cancel').disabled = state === 'scan' || state === 'sending';
-  $('ok').disabled = !(state === 'input' && current && current.product && qty);
+  $('cancel').disabled = state === 'scan';
+  $('ok').disabled = !(canInput && qty);
 }
 
 async function lookup(gtin) {
-  state = 'lookup';
-  setPaused(true);
+  state = 'input';
   vibrate(80);
-  const ticket = current = { gtin: gtin, product: null, requestId: uuid(), sent: false };
+  const ticket = current = { gtin: gtin, product: null, requestId: uuid() };
   qty = '';
+  qtyTouched = false;
   message('');
-  showProduct('', '照合しています…', 'GTIN ' + gtin, '');
+  showOverlay('', 'GTIN ' + gtin, '照合しています…', '', '');
   updateView();
 
+  let found;
   try {
-    const p = await api('lookup', { gtin: gtin });
-    if (current !== ticket) return; // 照合中にキャンセルされた
-
-    if (!p.found) {
-      showProduct('ng', '未登録のコードです', 'GTIN ' + gtin,
-        '医薬品マスタにありません。発注できません。キャンセルして読み直してください。');
-    } else {
-      ticket.product = p;
-      showProduct('ok', p.name, 'GTIN ' + p.gtin + '　卸：' + p.supplier,
-        p.pack + (p.maker ? '　' + p.maker : ''));
-      message('品名・包装・卸名を確認して、数量を入力してください。');
-    }
+    found = await findLocal(gtin);
   } catch (e) {
-    if (current !== ticket) return;
-    showProduct('ng', '照合できませんでした', 'GTIN ' + gtin, e.message);
+    found = { error: '照合できませんでした：' + e.message };
   }
+  if (current !== ticket) return; // 照合中にキャンセルされた
 
-  state = 'input';
+  if (found.error) {
+    showOverlay('ng', 'GTIN ' + gtin, found.error, '発注できません。キャンセルして読み直してください。', '');
+  } else {
+    const p = found.product;
+    ticket.product = p;
+    qty = '1';  // 数量は1から
+    showOverlay('', 'GTIN ' + p.gtin, p.name, p.pack + (p.maker ? '　' + p.maker : ''), '卸：' + p.supplier);
+  }
   updateView();
 }
 
@@ -516,13 +675,16 @@ function backToScan() {
   current = null;
   qty = '';
   state = 'scan';
-  showProduct('', 'バーコードを枠に合わせてください', '', '');
-  setPaused(false);
+  $('overlay').className = 'hidden';
   updateView();
 }
 
 function pressDigit(d) {
-  if (state !== 'input' || !current || !current.product || current.sent) return;
+  if (state !== 'input' || !current || !current.product) return;
+  if (!qtyTouched) {         // 最初のキーで初期値の1を置き換える
+    qty = '';
+    qtyTouched = true;
+  }
   if (d === '0' && !qty) return;           // 先頭に0は入れない
   if (qty.length >= MAX_DIGITS) return;
   qty += d;
@@ -530,51 +692,40 @@ function pressDigit(d) {
 }
 
 function pressBack() {
-  if (state !== 'input' || !current || current.sent) return;
+  if (state !== 'input' || !current || !current.product) return;
+  qtyTouched = true;
   qty = qty.slice(0, -1);
   updateView();
 }
 
 function pressCancel() {
-  if (state === 'sending' || state === 'scan') return;
-  const wasSent = current && current.sent;
+  if (state === 'scan') return;
   backToScan();
-  if (wasSent) {
-    message('前回の登録が保存されたか、注文リストで確認してください。', true);
-    loadList();
-  } else {
-    message('');
-  }
+  message('');
 }
 
-async function pressOk() {
+/** 確定：登録は裏側で送り、すぐ次の読み取りに戻る */
+function pressOk() {
   if (state !== 'input' || !current || !current.product || !qty) return;
-  const ticket = current;
-  const quantity = Number(qty);
+  const p = current.product;
 
-  state = 'sending';
-  ticket.sent = true;  // 送信後は数量を変えられない（再送で内容が変わらないように）
-  updateView();
-  message('登録しています…');
+  queue.push({
+    requestId: current.requestId,
+    gtin: p.gtin,
+    quantity: Number(qty),
+    name: p.name,
+    pack: p.pack,
+    supplier: p.supplier,
+    status: 'pending'
+  });
+  saveQueue();
 
-  try {
-    const r = await api('register', {
-      gtin: ticket.product.gtin,
-      quantity: quantity,
-      requestId: ticket.requestId
-    });
-    recent = { code: ticket.gtin, time: Date.now() };
-    vibrate(60);
-    toast('登録しました：' + r.name + ' × ' + r.quantity + (r.duplicate ? '（登録済み）' : ''));
-    message('');
-    backToScan();
-    loadList();
-  } catch (e) {
-    state = 'input';
-    updateView();
-    message('登録できませんでした：' + e.message +
-      '\nもう一度「確定」を押すと再送します（二重には登録されません）。', true);
-  }
+  recent = { code: current.gtin, time: Date.now() };
+  vibrate(60);
+  toast(p.name + ' × ' + qty);
+  backToScan();
+  renderList();
+  processQueue();
 }
 
 /* テンキーを作る */
@@ -613,20 +764,32 @@ $('camStart').onclick = startCamera;
 
 /* 画面を離れたらカメラを止め、戻ったら再開する */
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopCamera();
-  else startCamera();
+  if (document.hidden) {
+    stopCamera();
+  } else {
+    startCamera();
+    processQueue();
+  }
 });
 window.addEventListener('pagehide', stopCamera);
+window.addEventListener('online', processQueue);
 
 /* 起動 */
+function startup() {
+  loadMaster();
+  loadList();
+  renderList();
+  processQueue();  // 前回送れなかった登録があれば続きから送る
+}
+
 updateView();
-if (!GAS_URL.startsWith('https://script.google.com/')) {
-  message('GAS_URL が設定されていません。order.html の GAS_URL を書き換えてください。', true);
-} else if (!storageGet(PASS_KEY)) {
+renderList();
+if (!storageGet(PASS_KEY)) {
   showPass();
 } else {
-  loadList();
+  startup();
 }
+setInterval(loadMaster, MASTER_REFRESH_MS);
 startCamera();
 </script>
 </body>
