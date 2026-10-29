@@ -50,6 +50,20 @@ main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
 #editName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
 #editQty{font-size:36px;font-weight:bold}
 #editOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
+
+/* 入力タブ（品名検索） */
+#searchInput{
+ width:100%;padding:12px;margin-top:8px;
+ font:inherit;font-size:17px;
+ border:1px solid #c7d0dc;border-radius:10px;background:#fff;color:#1b2733;
+ -webkit-user-select:text;user-select:text;
+}
+.result{padding:10px 0;border-top:1px solid #e5eaf0;cursor:pointer}
+.result .rn{font-weight:bold;overflow-wrap:anywhere}
+.result .rs{font-size:13px;color:#5b6b7a;overflow-wrap:anywhere}
+#addName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
+#addQty{font-size:36px;font-weight:bold}
+#addOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
 .row2{display:flex;gap:8px;margin-top:14px}
 .row2 button{flex:1;height:56px;font-size:18px}
 
@@ -178,6 +192,7 @@ button:disabled{opacity:.35}
   <nav class="tabs">
     <button id="tabScan" class="active">スキャン</button>
     <button id="tabList">注文リスト</button>
+    <button id="tabInput">入力</button>
   </nav>
 
   <div id="listPage" class="hidden">
@@ -190,6 +205,16 @@ button:disabled{opacity:.35}
     </section>
     <button id="orderBtn">発注する（発注データを作成）</button>
     <div id="orderMsg" class="sub" style="margin-top:6px"></div>
+  </div>
+
+  <div id="inputPage" class="hidden">
+    <section class="card">
+      <div style="font-weight:bold">品名で検索して追加</div>
+      <div class="sub">バーコードがないとき用です。医薬品マスタから検索して、注文リストに追加します。</div>
+      <input id="searchInput" type="search" placeholder="品名・メーカー・コードで検索" autocomplete="off">
+      <div id="searchInfo" class="sub" style="margin-top:6px"></div>
+      <div id="searchResults"></div>
+    </section>
   </div>
 
   <div id="scanPage">
@@ -213,6 +238,7 @@ button:disabled{opacity:.35}
   <div class="keys" id="keys"></div>
   <button id="ok">確定</button>
   <div id="msg" class="sub"></div>
+  <button id="heatRegBtn" class="hidden" style="width:100%;margin-top:8px;font-size:16px;background:#e8eef4">このヒートを薬に紐付ける</button>
   </div>
 </main>
 
@@ -229,6 +255,22 @@ button:disabled{opacity:.35}
     <div class="keys" id="editKeys"></div>
     <button id="editOk">変更する</button>
     <div id="editMsg" class="sub" style="margin-top:6px;color:#ffb3b3"></div>
+  </div>
+</div>
+
+<!-- 入力タブからの追加（数量入力） -->
+<div id="addModal" class="modal hidden">
+  <div class="card">
+    <div class="sub" id="addSupplier"></div>
+    <div id="addName"></div>
+    <div class="sub" id="addPack"></div>
+    <div class="qtyRow">
+      <span class="sub">数量</span>
+      <span id="addQty"></span>
+    </div>
+    <div class="keys" id="addKeys"></div>
+    <button id="addOk">注文リストに追加</button>
+    <div id="addMsg" class="sub" style="margin-top:6px"></div>
   </div>
 </div>
 
@@ -321,6 +363,9 @@ let sending = false;
 let retryTimer = null;
 let activeTab = 'scan';
 let editing = null;   // { row, qty, touched }
+let pendingHeat = null;   // 未登録ヒート（紐付けボタンの対象）
+let heatRegFor = null;    // 紐付け中のヒートGTIN（次に箱を読む）
+let adding = null;        // { product, qty, touched }（入力タブからの追加）
 const busyIds = new Set();  // 編集・削除の通信中の注文
 
 /* ---------- 共通 ---------- */
@@ -447,6 +492,7 @@ async function loadMaster() {
     master = map;
     masterDup = new Set(data.duplicates || []);
     heatMap = new Map(data.heat || []);
+    if (activeTab === 'input') renderSearch();
     if (state === 'scan') $('camMsg').textContent = '';
   } catch (e) {
     if (!master) $('camMsg').textContent = 'マスタを読み込めません（読み取り時にGASで照合します）';
@@ -765,8 +811,70 @@ function onCode(gtin) {
   }
 
   firstHit = { code: '', time: 0 };
+  if (heatRegFor) {
+    handleHeatRegCode(gtin);
+    return;
+  }
   lookup(gtin);
 }
+
+/** ヒート紐付け中：箱（販売包装）のコードを読んだときの処理 */
+async function handleHeatRegCode(gtin) {
+  const heat = heatRegFor;
+
+  let found;
+  try {
+    found = await findLocal(gtin);
+  } catch (e) {
+    found = { error: e.message };
+  }
+
+  if (!found.product) {
+    vibrate([120, 80, 120]);
+    message('箱のコードとして読み取れませんでした。' +
+      (found.error || '医薬品マスタにないコードです。') +
+      '\n別の箱で試すか、「ヒートの紐付けをやめる」で終了してください。', true);
+    return;
+  }
+
+  try {
+    const r = await api('registerHeat', { heat: heat, gtin: found.product.gtin });
+    heatRegFor = null;
+    $('heatRegBtn').classList.add('hidden');
+    $('heatRegBtn').textContent = 'このヒートを薬に紐付ける';
+    message('');
+    toast('ヒートを登録しました：' + r.name);
+    await loadMaster();
+    lookup(heat);  // 登録したヒートで、そのまま包装の選択へ
+  } catch (e) {
+    message('ヒートを登録できませんでした：' + e.message +
+      '\n別の箱で試すか、「ヒートの紐付けをやめる」で終了してください。', true);
+  }
+}
+
+$('heatRegBtn').onclick = () => {
+  if (heatRegFor) {
+    // 紐付けを中止する
+    heatRegFor = null;
+    $('heatRegBtn').classList.add('hidden');
+    $('heatRegBtn').textContent = 'このヒートを薬に紐付ける';
+    message('');
+    return;
+  }
+  if (!pendingHeat) return;
+
+  heatRegFor = pendingHeat;
+  pendingHeat = null;
+  current = null;
+  qty = '';
+  state = 'scan';
+  $('overlay').className = 'hidden';
+  $('heatRegBtn').textContent = 'ヒートの紐付けをやめる';
+  $('heatRegBtn').classList.remove('hidden');
+  message('同じ薬の「箱」のGS1を読み取ってください。箱のコードで薬を特定します。');
+  vibrate(60);
+  updateView();
+};
 
 /* ---------- 照合・入力・確定 ---------- */
 
@@ -867,6 +975,18 @@ async function lookup(gtin) {
       vibrate([120, 80, 120]);
       showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
         'この薬の販売包装が医薬品マスタにありません。', 'キャンセルで次の読み取りに戻ります');
+    } else if (gtin.charAt(0) === '0') {
+      // 0始まり＝ヒート（調剤包装）の可能性が高いが、対応表に未登録
+      pendingHeat = gtin;
+      vibrate([120, 80, 120]);
+      showOverlay('ng', 'GTIN ' + gtin, '未登録のコードです',
+        (heatMap.size === 0
+          ? '調剤包装マスタに登録がまだありません。'
+          : 'このコードは調剤包装マスタに未登録です。') +
+        '\nヒートの場合は、下のボタンで薬に紐付けると次から包装が選べます。' +
+        '\nマスタにない商品は手書きで発注してください。',
+        'キャンセルで次の読み取りに戻ります');
+      $('heatRegBtn').classList.remove('hidden');
     } else {
       // マスタにないコード：手書きで発注してもらう
       vibrate([120, 80, 120]);
@@ -887,8 +1007,10 @@ function backToScan() {
   current = null;
   qty = '';
   state = 'scan';
+  pendingHeat = null;
   $('overlay').className = 'hidden';
   $('choiceModal').classList.add('hidden');
+  if (!heatRegFor) $('heatRegBtn').classList.add('hidden');
   updateView();
 }
 
@@ -949,13 +1071,166 @@ function showTab(tab) {
   activeTab = tab;
   $('scanPage').classList.toggle('hidden', tab !== 'scan');
   $('listPage').classList.toggle('hidden', tab !== 'list');
+  $('inputPage').classList.toggle('hidden', tab !== 'input');
   $('tabScan').classList.toggle('active', tab === 'scan');
   $('tabList').classList.toggle('active', tab === 'list');
+  $('tabInput').classList.toggle('active', tab === 'input');
   if (tab === 'list') loadList();
+  if (tab === 'input') renderSearch();
 }
 
 $('tabScan').onclick = () => showTab('scan');
 $('tabList').onclick = () => showTab('list');
+$('tabInput').onclick = () => showTab('input');
+
+/* ---------- 入力タブ（品名検索→数量→注文リスト追加） ---------- */
+
+function normText(s) {
+  return String(s || '').normalize('NFKC').toLowerCase();
+}
+
+let searchTimer = null;
+$('searchInput').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderSearch, 200);
+});
+
+function renderSearch() {
+  const box = $('searchResults');
+  if (!box) return;
+  box.replaceChildren();
+
+  if (!master) {
+    $('searchInfo').textContent = 'マスタを読み込めていません。通信状態を確認して、画面を開き直してください。';
+    return;
+  }
+
+  const q = normText($('searchInput').value.trim());
+  if (!q) {
+    $('searchInfo').textContent = '品名の一部を入力してください（マスタ ' + master.size + ' 件から検索）';
+    return;
+  }
+
+  const hits = [];
+  master.forEach(p => {
+    if (normText(p.name).includes(q) || normText(p.maker).includes(q) ||
+        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q))) {
+      hits.push(p);
+    }
+  });
+
+  $('searchInfo').textContent = hits.length + '件' +
+    (hits.length > 50 ? '（最初の50件を表示しています）' : '');
+
+  hits.slice(0, 50).forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'result';
+    const name = document.createElement('div');
+    name.className = 'rn';
+    name.textContent = p.name;
+    const sub = document.createElement('div');
+    sub.className = 'rs';
+    sub.textContent = p.pack + (p.maker ? '　' + p.maker : '') + '　卸：' + p.supplier;
+    row.append(name, sub);
+    row.onclick = () => openAdd(p);
+    box.appendChild(row);
+  });
+}
+
+function openAdd(p) {
+  adding = { product: p, qty: '1', touched: false };
+  $('addSupplier').textContent = p.supplier;
+  $('addName').textContent = p.name;
+  $('addPack').textContent = p.pack;
+  $('addMsg').textContent = '';
+  updateAdd();
+  $('addModal').classList.remove('hidden');
+  updateOrderButton();
+}
+
+function closeAdd() {
+  adding = null;
+  $('addModal').classList.add('hidden');
+  updateOrderButton();
+}
+
+function updateAdd() {
+  if (!adding) return;
+  $('addQty').textContent = adding.qty || '0';
+  $('addOk').disabled = !adding.qty;
+}
+
+function addDigit(d) {
+  if (!adding) return;
+  if (!adding.touched) {
+    adding.qty = '';
+    adding.touched = true;
+  }
+  if (d === '0' && !adding.qty) return;
+  if (adding.qty.length >= MAX_DIGITS) return;
+  adding.qty += d;
+  updateAdd();
+}
+
+function addBack() {
+  if (!adding) return;
+  adding.touched = true;
+  adding.qty = adding.qty.slice(0, -1);
+  updateAdd();
+}
+
+/** 追加：スキャンと同じ送信キューに入れるので、登録は裏側で送られる */
+function saveAdd() {
+  if (!adding || !adding.qty) return;
+  const p = adding.product;
+  const quantity = Number(adding.qty);
+
+  queue.push({
+    requestId: uuid(),
+    gtin: p.gtin,
+    quantity: quantity,
+    name: p.name,
+    pack: p.pack,
+    supplier: p.supplier,
+    status: 'pending'
+  });
+  saveQueue();
+
+  closeAdd();
+  vibrate(60);
+  toast(p.name + ' × ' + quantity);
+  renderList();
+  processQueue();
+}
+
+$('addOk').onclick = saveAdd;
+
+/* 追加用のテンキー */
+(function buildAddKeys() {
+  const keys = $('addKeys');
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
+    const b = document.createElement('button');
+    b.textContent = d;
+    b.onclick = () => addDigit(d);
+    keys.appendChild(b);
+  });
+
+  const cancel = document.createElement('button');
+  cancel.className = 'word cancel';
+  cancel.textContent = 'キャンセル';
+  cancel.onclick = closeAdd;
+
+  const zero = document.createElement('button');
+  zero.textContent = '0';
+  zero.onclick = () => addDigit('0');
+
+  const back = document.createElement('button');
+  back.className = 'word';
+  back.textContent = '戻る';
+  back.onclick = addBack;
+
+  keys.append(cancel, zero, back);
+})();
 
 /* ---------- 発注（発注データを作り、取込用フォルダに保存） ---------- */
 
