@@ -138,6 +138,16 @@ button:disabled{opacity:.35}
 #toast.show{opacity:1}
 #toast.warn{background:#b45309}
 
+/* 包装の選択（ヒートを読み取ったとき） */
+#choiceList{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+#choiceList button{
+ height:auto;min-height:56px;padding:10px 12px;
+ font-size:16px;text-align:left;background:#e8eef4;
+ display:flex;flex-direction:column;gap:2px;
+}
+#choiceList button .cp{font-weight:bold}
+#choiceList button .cs{font-size:13px;color:#41586c;font-weight:normal}
+
 /* 合言葉 */
 #passScreen{
  position:fixed;inset:0;z-index:10;
@@ -178,7 +188,7 @@ button:disabled{opacity:.35}
       </div>
       <div id="list"></div>
     </section>
-    <button id="orderBtn">発注する（FAX用PDFを作成）</button>
+    <button id="orderBtn">発注する（発注データを作成）</button>
     <div id="orderMsg" class="sub" style="margin-top:6px"></div>
   </div>
 
@@ -234,6 +244,18 @@ button:disabled{opacity:.35}
   </div>
 </div>
 
+<!-- 包装の選択（ヒートを読み取ったとき） -->
+<div id="choiceModal" class="modal hidden">
+  <div class="card">
+    <div class="sub">ヒートから読み取りました。発注する包装を選んでください</div>
+    <div id="choiceName" style="font-size:17px;font-weight:bold;overflow-wrap:anywhere"></div>
+    <div id="choiceList"></div>
+    <div class="row2">
+      <button id="choiceCancel" class="word">キャンセル</button>
+    </div>
+  </div>
+</div>
+
 <!-- 発注の確認・結果 -->
 <div id="orderModal" class="modal hidden">
   <div class="card">
@@ -251,8 +273,8 @@ button:disabled{opacity:.35}
 </div>
 
 <div id="orderBusy" class="hidden">
-  <div>PDFを作成しています…</div>
-  <div class="sub" style="margin-top:8px">卸の数によって30秒〜1分ほどかかります。<br>画面を閉じずにお待ちください。</div>
+  <div>発注データを作成しています…</div>
+  <div class="sub" style="margin-top:8px">30秒〜1分ほどかかります。<br>画面を閉じずにお待ちください。</div>
 </div>
 
 
@@ -292,6 +314,7 @@ let recent = { code: '', time: 0 };
 
 let master = null;    // Map: GTIN → 商品
 let masterDup = new Set();
+let heatMap = new Map();   // Map: ヒートGTIN → YJコード（調剤包装マスタ）
 let serverRows = [];  // GASから取得した未送信の注文
 let queue = loadQueue();
 let sending = false;
@@ -423,6 +446,7 @@ async function loadMaster() {
     });
     master = map;
     masterDup = new Set(data.duplicates || []);
+    heatMap = new Map(data.heat || []);
     if (state === 'scan') $('camMsg').textContent = '';
   } catch (e) {
     if (!master) $('camMsg').textContent = 'マスタを読み込めません（読み取り時にGASで照合します）';
@@ -764,6 +788,54 @@ function updateView() {
   $('ok').disabled = !(canInput && qty);
 }
 
+/** ヒート（調剤包装）のコードから、同じ薬の販売包装候補を返す。ヒートでなければ null */
+function heatCandidates(gtin) {
+  const yj = heatMap.get(gtin);
+  if (!yj || !master) return null;
+  const list = [];
+  master.forEach(p => {
+    if (p.yj === yj && p.gtin.charAt(0) === '1') list.push(p);
+  });
+  return { yj: yj, candidates: list };
+}
+
+/** 商品を確定して数量入力に進む */
+function applyProduct(ticket, p, viaHeat) {
+  ticket.product = p;
+  qty = '1';  // 数量は1から
+  qtyTouched = false;
+  showOverlay('', 'GTIN ' + p.gtin, p.name,
+    p.pack + (p.maker ? '　' + p.maker : '') + (viaHeat ? '\n（ヒートのコードから選択）' : ''),
+    '卸：' + p.supplier);
+}
+
+/** 販売包装が複数あるときの選択画面 */
+function showChoices(ticket, viaHeat) {
+  const first = viaHeat.candidates[0];
+  $('choiceName').textContent = first.name;
+  const list = $('choiceList');
+  list.replaceChildren();
+  viaHeat.candidates.forEach(p => {
+    const b = document.createElement('button');
+    const pack = document.createElement('span');
+    pack.className = 'cp';
+    pack.textContent = p.pack;
+    const sub = document.createElement('span');
+    sub.className = 'cs';
+    sub.textContent = (p.maker ? p.maker + '　' : '') + '卸：' + p.supplier;
+    b.append(pack, sub);
+    b.onclick = () => {
+      if (current !== ticket) return;
+      $('choiceModal').classList.add('hidden');
+      applyProduct(ticket, p, true);
+      updateView();
+    };
+    list.appendChild(b);
+  });
+  showOverlay('', 'GTIN ' + ticket.gtin, first.name, '包装を選んでください', '');
+  $('choiceModal').classList.remove('hidden');
+}
+
 async function lookup(gtin) {
   state = 'input';
   vibrate(80);
@@ -783,19 +855,30 @@ async function lookup(gtin) {
   if (current !== ticket) return; // 照合中にキャンセルされた
 
   if (found.notFound) {
-    // マスタにないコード：手書きで発注してもらう
-    vibrate([120, 80, 120]);
-    showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
-      '医薬品マスタに登録がありません。\n手書きで発注してください。', 'キャンセルで次の読み取りに戻ります');
+    // ヒート（調剤包装）のコードなら、販売包装の候補から選ばせる
+    const viaHeat = master ? heatCandidates(gtin) : null;
+    if (viaHeat && viaHeat.candidates.length === 1) {
+      applyProduct(ticket, viaHeat.candidates[0], true);
+    } else if (viaHeat && viaHeat.candidates.length > 1) {
+      showChoices(ticket, viaHeat);
+      updateView();
+      return;
+    } else if (viaHeat) {
+      vibrate([120, 80, 120]);
+      showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
+        'この薬の販売包装が医薬品マスタにありません。', 'キャンセルで次の読み取りに戻ります');
+    } else {
+      // マスタにないコード：手書きで発注してもらう
+      vibrate([120, 80, 120]);
+      showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
+        '医薬品マスタに登録がありません。\n手書きで発注してください。', 'キャンセルで次の読み取りに戻ります');
+    }
   } else if (found.error) {
     vibrate([120, 80, 120]);
     showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
       found.error + '\nキャンセルして読み直してください。', '');
   } else {
-    const p = found.product;
-    ticket.product = p;
-    qty = '1';  // 数量は1から
-    showOverlay('', 'GTIN ' + p.gtin, p.name, p.pack + (p.maker ? '　' + p.maker : ''), '卸：' + p.supplier);
+    applyProduct(ticket, found.product, false);
   }
   updateView();
 }
@@ -805,8 +888,11 @@ function backToScan() {
   qty = '';
   state = 'scan';
   $('overlay').className = 'hidden';
+  $('choiceModal').classList.add('hidden');
   updateView();
 }
+
+$('choiceCancel').onclick = () => pressCancel();
 
 function pressDigit(d) {
   if (state !== 'input' || !current || !current.product) return;
@@ -871,7 +957,7 @@ function showTab(tab) {
 $('tabScan').onclick = () => showTab('scan');
 $('tabList').onclick = () => showTab('list');
 
-/* ---------- 発注（卸ごとのPDFを作り、印刷用フォルダに保存） ---------- */
+/* ---------- 発注（発注データを作り、取込用フォルダに保存） ---------- */
 
 let ordering = false;
 
@@ -904,7 +990,7 @@ function openOrder() {
     box.appendChild(line);
   });
   $('orderNote').textContent =
-    '卸ごとのFAX発注書（PDF）を印刷用フォルダに保存します。\n' +
+    '発注データ（Excel）を取込用フォルダに保存します。\n' +
     '保存した品目は「発注済」になり、注文リストから消えます。';
   $('orderAsk').classList.remove('hidden');
   $('orderDone').classList.add('hidden');
@@ -927,22 +1013,22 @@ async function runOrder() {
 
   try {
     const r = await api('order', { ids: ids }, 180000);
-    title = '発注書を作成しました';
+    title = '発注データを作成しました';
     r.suppliers.forEach(s => {
       const line = document.createElement('div');
       const name = document.createElement('span');
       name.textContent = s.supplier + '（' + s.items + '品目）';
       const files = document.createElement('span');
-      files.textContent = s.files.length + '枚';
+      files.textContent = s.files.join(' ');
       line.append(name, files);
       box.appendChild(line);
     });
-    note = 'PDFを印刷用フォルダに保存しました。印刷されたかを確認してください。';
+    note = '発注データ（Excel）を取込用フォルダに保存しました。取り込まれたかを確認してください。';
   } catch (e) {
     title = '発注できませんでした';
     note = e.message + (e.retry
       ? '\n\n通信が途中で切れた可能性があります。もう一度発注する前に、' +
-        '注文リストを更新し、印刷用フォルダにPDFが作られていないか確認してください。'
+        '注文リストを更新し、取込用フォルダに発注ファイルが作られていないか確認してください。'
       : '');
   } finally {
     ordering = false;
