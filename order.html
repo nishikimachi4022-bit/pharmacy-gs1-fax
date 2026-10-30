@@ -1,1612 +1,425 @@
-<!doctype html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>医薬品GS1発注</title>
-<style>
-*{box-sizing:border-box}
-body{
- margin:0;
- background:#f3f6f9;
- color:#1b2733;
- font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;
- -webkit-user-select:none;
- user-select:none;
-}
-main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
-.card{background:#fff;border:1px solid #dde3ea;border-radius:12px;padding:10px 12px;margin-bottom:8px}
-.sub{font-size:13px;color:#5b6b7a}
-.hidden{display:none!important}
+/**
+ * 発注：未送信の注文を「商品コード・数量・卸コード」のExcelファイル（.xlsx）にして、Googleドライブの取込用フォルダに保存する。
+ *
+ * - スクリプトプロパティ「PDF_FOLDER_ID」に保存先フォルダのIDを設定しておく（今までと同じ。名前はそのまま使う）。
+ * - 卸コードは、このスプレッドシートの「卸コード」シートから、卸名で引く。
+ * - ファイルは1回の発注につき1つ（yyyyMMdd_HHmmss_HACCHU1.xlsx＝日付＋発注時刻、シート名は Sheet1）。全卸の注文が1枚のシートに入る。
+ * - 作業用のスプレッドシートはマイドライブ直下に一時的に作り、xlsxにしたらすぐゴミ箱へ入れる（保存先フォルダには置かない）。
+ * - ファイルをフォルダに保存した卸の分だけ「発注済」にする。行は削除しない。
+ *
+ * 列：A 商品コード（JAN13桁。GTIN14桁の頭の1を除く）  B 数量  C 卸コード。1行目は見出し。
+ *
+ * ※ 2026-10-29 ユーザーから受領した最新版のコピー（このセッションで保管）
+ */
 
-/* タブ */
-.tabs{display:flex;gap:6px;margin-bottom:8px}
-.tabs button{flex:1;height:44px;font-size:16px;background:#e3e9ef;color:#3b4b5a}
-.tabs button.active{background:#2563eb;color:#fff}
+const API_STATUS_ORDERED = '発注済';
+const ORDER_LOG_SHEET = '発注記録';
+const ORDER_LOG_HEADERS = ['発注日時', '卸名', '品目数', 'ファイル名', '発注ID'];
 
-/* 注文リスト */
-#listHead{display:flex;justify-content:space-between;align-items:center;font-weight:bold}
-#list{margin-top:4px;font-size:15px}
-.group{color:#2563eb;font-size:13px;font-weight:bold;margin-top:12px}
-/* 1行目に品名・包装、2行目の右側に数量とボタン */
-.item{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:8px 0;border-top:1px solid #e5eaf0}
-.item .name{flex:1 1 100%;min-width:0;overflow-wrap:anywhere}
-.item .q{font-weight:bold;font-size:20px;white-space:nowrap;margin-left:auto;margin-right:6px}
-.item.pending{color:#b45309}
-.item.error{color:#b91c1c}
-.item.busy{opacity:.5}
-.item .tag{display:block;font-size:12px}
-.item button{height:40px;font-size:14px;padding:0 10px;flex:none}
-.item button.edit{background:#e8eef4;border:1px solid #cfd8e3}
-.item button.del{background:#fde2e2;color:#b91c1c;width:44px;font-size:18px;margin-left:6px}
+const SUPPLIER_CODE_SHEET = '卸コード';
+const HACCHU_HEADERS = ['商品コード', '数量', '卸コード'];
+const HACCHU_SHEET_NAME = 'Sheet1';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/* 数量編集・確認の画面 */
-.modal{
- position:fixed;inset:0;z-index:5;
- background:#0007;
- display:flex;align-items:flex-end;justify-content:center;
-}
-.modal .card{width:100%;max-width:640px;margin:0;border:0;border-radius:16px 16px 0 0;padding:14px 12px 20px}
-#editName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
-#editQty{font-size:36px;font-weight:bold}
-#editOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
-
-/* 入力タブ（品名検索） */
-#searchInput{
- width:100%;padding:12px;margin-top:8px;
- font:inherit;font-size:17px;
- border:1px solid #c7d0dc;border-radius:10px;background:#fff;color:#1b2733;
- -webkit-user-select:text;user-select:text;
-}
-.result{padding:10px 0;border-top:1px solid #e5eaf0;cursor:pointer}
-.result .rn{font-weight:bold;overflow-wrap:anywhere}
-.result .rs{font-size:13px;color:#5b6b7a;overflow-wrap:anywhere}
-.kanaGrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px}
-.kanaGrid button{height:46px;font-size:19px;padding:0}
-.kanaGrid button.active{background:#2563eb;color:#fff;border:0}
-.kanaGrid .gap{visibility:hidden}
-#kanaBar{margin-top:6px;display:flex;gap:6px}
-#kanaBar button{height:44px;padding:0 16px;font-size:15px}
-#addName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
-#addQty{font-size:36px;font-weight:bold}
-#addOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
-.row2{display:flex;gap:8px;margin-top:14px}
-.row2 button{flex:1;height:56px;font-size:18px}
-
-#orderBtn{width:100%;height:64px;margin-top:4px;background:#2563eb;color:#fff;font-size:20px}
-#orderSummary div{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #e5eaf0;font-size:16px}
-#orderBusy{
- position:fixed;inset:0;z-index:7;
- background:#000c;color:#fff;
- display:flex;flex-direction:column;align-items:center;justify-content:center;
- font-size:18px;font-weight:bold;text-align:center;padding:20px;
-}
-#orderBusy .sub{color:#dbe4ec}
-
-/* カメラ（読み取った商品はカメラの上に重ねて表示） */
-.camera{
- position:relative;
- width:100%;
- aspect-ratio:16/9;
- max-height:38vh;
- background:#000;
- border-radius:12px;
- overflow:hidden;
-}
-video{width:100%;height:100%;object-fit:cover}
-#camMsg{
- position:absolute;left:0;right:0;bottom:6px;
- color:#fff;
- text-align:center;font-size:13px;
- text-shadow:0 0 4px #000,0 0 4px #000;
-}
-#overlay{
- position:absolute;inset:0;
- padding:10px 12px;
- display:flex;flex-direction:column;justify-content:center;
- background:#14532df2;
- color:#fff;
-}
-#overlay.ng{background:#991b1bf2}
-#pName{font-size:19px;font-weight:bold;line-height:1.3;overflow-wrap:anywhere}
-#pSub,#pCode{font-size:13px;color:#e3f1e8;overflow-wrap:anywhere}
-#pSub{white-space:pre-wrap}
-#overlay.ng #pName{font-size:26px}
-#overlay.ng #pSub{font-size:15px;color:#fff}
-#pSupplier{font-size:16px;font-weight:bold;margin-top:4px}
-
-/* 数量・テンキー */
-.qtyRow{display:flex;justify-content:space-between;align-items:baseline;margin:4px 4px 6px}
-#qty{font-size:36px;font-weight:bold}
-.keys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-button{
- font:inherit;
- border:1px solid #cfd8e3;
- border-radius:10px;
- height:48px;
- font-size:24px;
- font-weight:bold;
- background:#fff;
- color:#13222f;
- touch-action:manipulation;
-}
-button.word{font-size:16px;background:#e8eef4}
-button.cancel{background:#fde2e2;color:#b91c1c;border-color:#f5c2c2}
-#ok{
- width:100%;
- height:76px;
- margin-top:8px;
- background:#16a17f;
- border:0;
- color:#fff;
- font-size:28px;
-}
-.tabs button,#orderBtn,#editOk,.item button.del{border:0}
-button:disabled{opacity:.35}
-#msg{min-height:20px;margin-top:8px;white-space:pre-wrap}
-#msg.error{color:#b91c1c}
-
-#toast{
- position:fixed;left:50%;top:12px;transform:translateX(-50%);
- max-width:92%;
- background:#16a17f;color:#fff;font-weight:bold;
- padding:12px 16px;border-radius:12px;
- box-shadow:0 4px 16px #0004;
- transition:opacity .3s;
- opacity:0;pointer-events:none;
-}
-#toast.show{opacity:1}
-#toast.warn{background:#b45309}
-
-/* 包装の選択（ヒートを読み取ったとき） */
-#choiceList{display:flex;flex-direction:column;gap:8px;margin-top:10px}
-#choiceList button{
- height:auto;min-height:56px;padding:10px 12px;
- font-size:16px;text-align:left;background:#e8eef4;
- display:flex;flex-direction:column;gap:2px;
-}
-#choiceList button .cp{font-weight:bold}
-#choiceList button .cs{font-size:13px;color:#41586c;font-weight:normal}
-
-/* 合言葉 */
-#passScreen{
- position:fixed;inset:0;z-index:10;
- background:#f3f6f9;
- display:flex;align-items:center;justify-content:center;
- padding:20px;
-}
-#passScreen input{
- font:inherit;font-size:18px;
- width:100%;padding:12px;margin:10px 0;
- border-radius:10px;border:1px solid #adbcc6;
-}
-</style>
-</head>
-<body>
-
-<div id="passScreen" class="hidden">
-  <div class="card" style="width:100%;max-width:420px">
-    <div style="font-weight:bold;font-size:18px">合言葉を入力してください</div>
-    <div class="sub">この端末に記憶されます。最初の1回だけ必要です。</div>
-    <input id="passInput" type="password" autocomplete="off">
-    <button id="passSave" style="width:100%;background:#16a17f;color:#fff;font-size:18px">保存</button>
-    <div id="passMsg" class="sub" style="margin-top:8px"></div>
-  </div>
-</div>
-
-<main>
-  <nav class="tabs">
-    <button id="tabScan" class="active">スキャン</button>
-    <button id="tabInput">入力</button>
-    <button id="tabList">注文リスト</button>
-  </nav>
-
-  <div id="listPage" class="hidden">
-    <button id="orderBtn">発注する（発注データを作成）</button>
-    <div id="orderMsg" class="sub" style="margin-top:6px"></div>
-    <section class="card">
-      <div id="listHead">
-        <span id="listTitle">注文リスト</span>
-        <button id="reload" class="word" style="height:34px;padding:0 14px;font-size:14px">更新</button>
-      </div>
-      <div id="list"></div>
-    </section>
-  </div>
-
-  <div id="inputPage" class="hidden">
-    <section class="card">
-      <div style="font-weight:bold">品名で検索して追加</div>
-      <div class="sub">バーコードがないとき用です。下の五十音キーで品名を入力して検索し、注文リストに追加します。</div>
-      <input id="searchInput" type="text" placeholder="下の五十音キーで入力" autocomplete="off" readonly>
-      <div class="kanaGrid" id="kanaGrid"></div>
-      <div id="kanaBar"></div>
-      <div id="searchInfo" class="sub" style="margin-top:6px"></div>
-      <div id="searchResults"></div>
-    </section>
-  </div>
-
-  <div id="scanPage">
-  <div class="camera" id="camera">
-    <video id="video" autoplay playsinline muted></video>
-    <div id="camMsg">カメラを準備しています…</div>
-    <div id="overlay" class="hidden">
-      <div id="pCode"></div>
-      <div id="pName"></div>
-      <div id="pSub"></div>
-      <div id="pSupplier"></div>
-    </div>
-  </div>
-  <!-- カメラが自動で起動できなかったときだけ表示 -->
-  <button id="camStart" class="hidden" style="width:100%;margin-top:6px;font-size:18px">カメラを開始</button>
-
-  <div class="qtyRow">
-    <span class="sub">数量</span>
-    <span id="qty">-</span>
-  </div>
-  <div class="keys" id="keys"></div>
-  <button id="ok">確定</button>
-  <div id="msg" class="sub"></div>
-  <button id="heatRegBtn" class="hidden" style="width:100%;margin-top:8px;font-size:16px;background:#e8eef4">このヒートを薬に紐付ける</button>
-  </div>
-</main>
-
-<!-- 数量の編集 -->
-<div id="editModal" class="modal hidden">
-  <div class="card">
-    <div class="sub" id="editSupplier"></div>
-    <div id="editName"></div>
-    <div class="sub" id="editPack"></div>
-    <div class="qtyRow">
-      <span class="sub">数量を変更（今は <span id="editNow"></span>）</span>
-      <span id="editQty"></span>
-    </div>
-    <div class="keys" id="editKeys"></div>
-    <button id="editOk">変更する</button>
-    <div id="editMsg" class="sub" style="margin-top:6px;color:#ffb3b3"></div>
-  </div>
-</div>
-
-<!-- 入力タブからの追加（数量入力） -->
-<div id="addModal" class="modal hidden">
-  <div class="card">
-    <div class="sub" id="addSupplier"></div>
-    <div id="addName"></div>
-    <div class="sub" id="addPack"></div>
-    <div class="qtyRow">
-      <span class="sub">数量</span>
-      <span id="addQty"></span>
-    </div>
-    <div class="keys" id="addKeys"></div>
-    <button id="addOk">注文リストに追加</button>
-    <div id="addMsg" class="sub" style="margin-top:6px"></div>
-  </div>
-</div>
-
-<!-- 削除の確認 -->
-<div id="confirmModal" class="modal hidden">
-  <div class="card">
-    <div id="confirmText" style="font-size:17px;font-weight:bold;overflow-wrap:anywhere"></div>
-    <div class="sub" style="margin-top:6px">シートの行は消さず「取消」にします。</div>
-    <div class="row2">
-      <button id="confirmNo" class="word">やめる</button>
-      <button id="confirmYes" class="cancel">外す</button>
-    </div>
-  </div>
-</div>
-
-<!-- 包装の選択（ヒートを読み取ったとき） -->
-<div id="choiceModal" class="modal hidden">
-  <div class="card">
-    <div class="sub">ヒートから読み取りました。発注する包装を選んでください</div>
-    <div id="choiceName" style="font-size:17px;font-weight:bold;overflow-wrap:anywhere"></div>
-    <div id="choiceList"></div>
-    <div class="row2">
-      <button id="choiceCancel" class="word">キャンセル</button>
-    </div>
-  </div>
-</div>
-
-<!-- 発注の確認・結果 -->
-<div id="orderModal" class="modal hidden">
-  <div class="card">
-    <div id="orderTitle" style="font-size:18px;font-weight:bold">発注しますか？</div>
-    <div id="orderSummary" style="margin-top:8px"></div>
-    <div id="orderNote" class="sub" style="margin-top:8px;white-space:pre-wrap"></div>
-    <div class="row2" id="orderAsk">
-      <button id="orderNo" class="word">やめる</button>
-      <button id="orderYes" style="background:#2563eb;color:#fff">発注する</button>
-    </div>
-    <div class="row2 hidden" id="orderDone">
-      <button id="orderClose" class="word">閉じる</button>
-    </div>
-  </div>
-</div>
-
-<div id="orderBusy" class="hidden">
-  <div>発注データを作成しています…</div>
-  <div class="sub" style="margin-top:8px">30秒〜1分ほどかかります。<br>画面を閉じずにお待ちください。</div>
-</div>
-
-
-<div id="toast"></div>
-<canvas id="canvas" hidden></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.5/dist/iife/reader/index.js"></script>
-<script>
-"use strict";
-
-// GASのウェブアプリURL
-const GAS_URL =
-  'https://script.google.com/macros/s/AKfycbyMEBbzk9K3sqllJAZlFyO7ApxI_p7s5lLFWg1as5mmtBAT1Zy-gWTL689cIRUyWATF/exec';
-
-const PASS_KEY = 'gs1order.passcode';
-const QUEUE_KEY = 'gs1order.queue';
-const SCAN_MS = 200;           // 読み取りの間隔
-const CONFIRM_MS = 1500;       // この時間内に同じコードを2回読めたら採用
-const COOLDOWN_MS = 4000;      // 確定直後に同じコードを無視する時間
-const RETRY_MS = 5000;         // 通信失敗時の再送間隔
-const MASTER_REFRESH_MS = 30 * 60 * 1000;  // マスタの再読み込み間隔
-const MAX_DIGITS = 4;          // 数量は 1〜9999
-
-const $ = id => document.getElementById(id);
-
-let stream = null;
-let timer = null;
-let frameBusy = false;
-
-// scan：読み取り中 / input：数量入力
-let state = 'scan';
-let current = null;   // { gtin, product, requestId }
-let qty = '';
-let qtyTouched = false;
-let firstHit = { code: '', time: 0 };
-let recent = { code: '', time: 0 };
-
-let master = null;    // Map: GTIN → 商品
-let masterDup = new Set();
-let heatMap = new Map();   // Map: ヒートGTIN → YJコード（調剤包装マスタ）
-let serverRows = [];  // GASから取得した未送信の注文
-let queue = loadQueue();
-let sending = false;
-let retryTimer = null;
-let activeTab = 'scan';
-let editing = null;   // { row, qty, touched }
-let pendingHeat = null;   // 未登録ヒート（紐付けボタンの対象）
-let heatRegFor = null;    // 紐付け中のヒートGTIN（次に箱を読む）
-let adding = null;        // { product, qty, touched }（入力タブからの追加）
-const busyIds = new Set();  // 編集・削除の通信中の注文
-
-/* ---------- 共通 ---------- */
-
-function storageGet(key) {
-  try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
-}
-
-function storageSet(key, value) {
-  try {
-    if (value) localStorage.setItem(key, value);
-    else localStorage.removeItem(key);
-  } catch (e) { /* 保存できない環境では毎回入力 */ }
-}
-
-function uuid() {
-  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-  const b = crypto.getRandomValues(new Uint8Array(16));
-  b[6] = (b[6] & 0x0f) | 0x40;
-  b[8] = (b[8] & 0x3f) | 0x80;
-  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
-  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-' + h.slice(12, 16) + '-' +
-    h.slice(16, 20) + '-' + h.slice(20);
-}
-
-function message(text, isError) {
-  $('msg').textContent = text || '';
-  $('msg').className = 'sub' + (isError ? ' error' : '');
-}
-
-let toastTimer = null;
-function toast(text, warn) {
-  const el = $('toast');
-  el.textContent = text;
-  el.className = 'show' + (warn ? ' warn' : '');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.className = warn ? 'warn' : ''; }, warn ? 5000 : 2000);
-}
-
-function vibrate(ms) {
-  if (navigator.vibrate) navigator.vibrate(ms);
-}
-
-/* ---------- GASとの通信 ---------- */
-
-/** retry が true のエラーは、時間をおいて再送してよいもの */
-function apiError(text, retry) {
-  const e = new Error(text);
-  e.retry = retry;
-  return e;
-}
-
-async function api(action, params, timeoutMs) {
-  const pass = storageGet(PASS_KEY);
-  if (!pass) {
-    showPass();
-    throw apiError('合言葉が設定されていません。', false);
+/** 発注（doPost の action: 'order' から呼ばれる） */
+function apiOrder_(inputIds) {
+  if (!Array.isArray(inputIds) || !inputIds.length) {
+    throw new Error('発注する品目がありません。');
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs || 30000);
-  let res;
+  const ids = inputIds.map(apiId_);
+  const folder = getPdfFolder_();
+
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    throw new Error('別の処理中です。少し待って再度お試しください。');
+  }
 
   try {
-    // Content-Type を付けない（text/plain）ことで、GASへ直接送れる
-    res = await fetch(GAS_URL, {
-      method: 'POST',
-      body: JSON.stringify(Object.assign({ action: action, passcode: pass }, params || {})),
-      signal: controller.signal
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const hs = ss.getSheetByName(HISTORY_SHEET);
+
+    if (!hs || hs.getLastRow() < 2) {
+      throw new Error('発注履歴がありません。');
+    }
+
+    // 画面に表示していた注文だけを対象にする（別の端末で後から追加された分は含めない）
+    const wanted = new Set(ids);
+    const rows = [];
+
+    hs.getRange(2, 1, hs.getLastRow() - 1, HISTORY_HEADERS.length)
+      .getDisplayValues()
+      .forEach((r, i) => {
+        if (wanted.has(r[9]) && r[8] === API_STATUS_OPEN) {
+          rows.push({
+            row: i + 2, supplier: r[1], gtin: r[2], yj: r[3], name: r[4],
+            pack: r[5], maker: r[6], quantity: Number(r[7]), id: r[9]
+          });
+        }
+      });
+
+    if (rows.length !== wanted.size) {
+      throw new Error(
+        '注文リストが変わっています（別の端末で変更・発注された可能性があります）。' +
+        'リストを更新してから、もう一度発注してください。'
+      );
+    }
+
+    const now = new Date();
+    const codes = loadSupplierCodes_(ss);
+
+    // 1) 先にExcelを作る。ここで失敗したら、何も保存しない。
+    const items = mergeItems_(rows);
+    const records = items.map(it => hacchuRow_(it, codes));
+
+    const baseName = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyyMMdd_HHmmss') + '_HACCHU1';
+    const fileName = uniqueFileName_(folder, baseName);
+    const blob = buildHacchuXlsx_(records, HACCHU_SHEET_NAME, fileName);
+
+    // 2) フォルダへ保存 → 卸ごとに発注済みにする
+    folder.createFile(blob);
+
+    const log = prepareSheet_(ORDER_LOG_SHEET, ORDER_LOG_HEADERS);
+    const result = [];
+
+    groupBySupplier_(rows).forEach(g => {
+      markOrdered_(ss, hs, g);
+      log.appendRow([
+        now, g.supplier, items.filter(it => it.supplier === g.supplier).length,
+        fileName, g.rows.map(r => r.id).join('\n')
+      ]);
+      SpreadsheetApp.flush();
+
+      result.push({
+        supplier: g.supplier,
+        items: items.filter(it => it.supplier === g.supplier).length,
+        files: [fileName]
+      });
     });
-  } catch (e) {
-    throw apiError('通信できませんでした。', true);
+
+    return { suppliers: result };
   } finally {
-    clearTimeout(timeout);
+    lock.releaseLock();
+  }
+}
+
+/** 保存先フォルダ */
+function getPdfFolder_() {
+  const id = PropertiesService.getScriptProperties().getProperty('PDF_FOLDER_ID');
+
+  if (!id) {
+    throw new Error('保存先が設定されていません。スクリプトプロパティ PDF_FOLDER_ID を設定してください。');
   }
 
-  let json;
   try {
-    json = await res.json();
+    return DriveApp.getFolderById(id);
   } catch (e) {
-    throw apiError('GASの応答を読み取れません。', true);
-  }
-
-  if (!json.ok) {
-    if (json.error === '合言葉が違います。') {
-      storageSet(PASS_KEY, '');
-      showPass('合言葉が違います。もう一度入力してください。');
-    }
-    const busy = /少し待って/.test(json.error || '');
-    throw apiError(json.error || 'エラーが発生しました。', busy);
-  }
-
-  return json.data;
-}
-
-/* ---------- 合言葉 ---------- */
-
-function showPass(text) {
-  $('passMsg').textContent = text || '';
-  $('passInput').value = '';
-  $('passScreen').classList.remove('hidden');
-}
-
-$('passSave').onclick = () => {
-  const value = $('passInput').value.trim();
-  if (value.length < 8) {
-    $('passMsg').textContent = '8文字以上で入力してください。';
-    return;
-  }
-  storageSet(PASS_KEY, value);
-  $('passScreen').classList.add('hidden');
-  startup();
-};
-
-/* ---------- 医薬品マスタ（スマホ側で照合するため） ---------- */
-
-async function loadMaster() {
-  try {
-    const data = await api('master');
-    const map = new Map();
-    data.items.forEach(r => {
-      map.set(r[0], { gtin: r[0], yj: r[1], name: r[2], pack: r[3], maker: r[4], supplier: r[5] });
-    });
-    master = map;
-    masterDup = new Set(data.duplicates || []);
-    heatMap = new Map(data.heat || []);
-    if (activeTab === 'input') renderSearch();
-    if (state === 'scan') $('camMsg').textContent = '';
-  } catch (e) {
-    if (!master) $('camMsg').textContent = 'マスタを読み込めません（読み取り時にGASで照合します）';
+    throw new Error('保存先フォルダを開けません。PDF_FOLDER_ID を確認してください。');
   }
 }
 
-/** スマホ側で照合する。マスタ未読み込みのときだけGASに問い合わせる */
-async function findLocal(gtin) {
-  if (!master) {
-    const p = await api('lookup', { gtin: gtin });
-    return p.found ? { product: p } : { notFound: true };
+/** 同じ名前のファイルが既にあれば _2, _3 … を付ける（上書き・取り違え防止） */
+function uniqueFileName_(folder, baseName) {
+  let name = baseName + '.xlsx';
+
+  for (let n = 2; folder.getFilesByName(name).hasNext(); n++) {
+    name = baseName + '_' + n + '.xlsx';
   }
-  if (masterDup.has(gtin)) {
-    return { error: '医薬品マスタに同じGTINが複数あります。マスタを修正してください。' };
-  }
-  const p = master.get(gtin);
-  if (!p) return { notFound: true };
-  if (!p.name || !p.pack || !p.supplier) {
-    return { error: '医薬品名・包装規格・卸名のいずれかが空欄です。マスタを確認してください。' };
-  }
-  return { product: p };
+
+  return name;
 }
 
-/* ---------- 送信待ちの登録（画面を閉じても残す） ---------- */
+/* ---------------- 卸コード ---------------- */
 
-function loadQueue() {
-  try { return JSON.parse(storageGet(QUEUE_KEY) || '[]'); } catch (e) { return []; }
-}
+function loadSupplierCodes_(ss) {
+  const sheet = ss.getSheetByName(SUPPLIER_CODE_SHEET);
 
-function saveQueue() {
-  storageSet(QUEUE_KEY, queue.length ? JSON.stringify(queue) : '');
-}
-
-async function processQueue() {
-  if (sending) return;
-  const job = queue.find(j => j.status === 'pending');
-  if (!job) return;
-
-  if (retryTimer) {
-    clearTimeout(retryTimer);
-    retryTimer = null;
+  if (!sheet || sheet.getLastRow() < 1) {
+    throw new Error('「' + SUPPLIER_CODE_SHEET + '」シートが見つかりません。');
   }
 
-  sending = true;
-  let waitRetry = false;
-  try {
-    const r = await api('register', {
-      gtin: job.gtin,
-      quantity: job.quantity,
-      requestId: job.requestId
-    });
+  const map = {};
 
-    queue = queue.filter(j => j !== job);
-    saveQueue();
-    serverRows = serverRows.filter(x => x.id !== r.id).concat([{
-      id: r.id, supplier: r.supplier, name: r.name, pack: r.pack, quantity: r.quantity
-    }]);
+  sheet.getDataRange().getDisplayValues().forEach(row => {
+    const cells = row.map(v => String(v).trim()).filter(Boolean);
+    const code = cells.find(v => /^\d{6,12}$/.test(v));
+    if (!code) return;
 
-    // 画面に出した内容と、登録時のマスタが違っていたら知らせる
-    if (r.name !== job.name || r.pack !== job.pack || r.supplier !== job.supplier) {
-      toast('マスタが変更されていました。登録内容：' + r.name + ' ' + r.pack + '（' + r.supplier + '）', true);
-    }
-
-    // 同じ商品が未発注で残っていた場合は、数量が置き換わったことを知らせる
-    if (r.replaced) {
-      toast(job.name + ' は注文リストにあったため、数量を ' + r.quantity + ' に置き換えました');
-    }
-  } catch (e) {
-    if (e.retry) {
-      waitRetry = true;  // 電波が悪いときなど。少し待って再送する
-      retryTimer = setTimeout(processQueue, RETRY_MS);
-    } else {
-      job.status = 'error';
-      job.error = e.message;
-      saveQueue();
-      toast('登録できませんでした：' + job.name, true);
-    }
-  } finally {
-    sending = false;
-    renderList();
-  }
-
-  if (waitRetry) return;
-  if (queue.some(j => j.status === 'pending')) {
-    processQueue();
-  } else if (!queue.length) {
-    loadList();
-  }
-}
-
-function dismissJob(requestId) {
-  queue = queue.filter(j => j.requestId !== requestId);
-  saveQueue();
-  renderList();
-}
-
-/* ---------- 注文リスト ---------- */
-
-async function loadList() {
-  try {
-    serverRows = await api('list');
-  } catch (e) {
-    $('listTitle').textContent = '注文リスト（読み込めません）';
-    return;
-  }
-  renderList();
-}
-
-function renderList() {
-  // 送信中の登録も、リストに一緒に表示する
-  const rows = serverRows.map(r => Object.assign({ kind: '' }, r))
-    .concat(queue.map(j => ({
-      kind: j.status, supplier: j.supplier, name: j.name, pack: j.pack,
-      quantity: j.quantity, requestId: j.requestId, error: j.error
-    })));
-
-  const waiting = queue.filter(j => j.status === 'pending').length;
-  $('listTitle').textContent = '注文リスト（' + rows.length + '件' +
-    (waiting ? '・送信中 ' + waiting : '') + '）';
-  $('tabList').textContent = '注文リスト（' + rows.length + '）';
-  updateOrderButton();
-
-  const list = $('list');
-  list.replaceChildren();
-
-  if (!rows.length) {
-    const empty = document.createElement('div');
-    empty.className = 'sub';
-    empty.textContent = 'まだ登録はありません';
-    list.appendChild(empty);
-    return;
-  }
-
-  const suppliers = [];
-  rows.forEach(r => { if (!suppliers.includes(r.supplier)) suppliers.push(r.supplier); });
-
-  suppliers.forEach(s => {
-    const head = document.createElement('div');
-    head.className = 'group';
-    head.textContent = s;
-    list.appendChild(head);
-
-    rows.filter(r => r.supplier === s).forEach(r => {
-      const item = document.createElement('div');
-      const busy = Boolean(r.id && busyIds.has(r.id));
-      item.className = 'item' + (r.kind ? ' ' + r.kind : '') + (busy ? ' busy' : '');
-
-      const name = document.createElement('span');
-      name.className = 'name';
-      name.textContent = r.name + '　' + r.pack;
-      if (r.kind) {
-        const tag = document.createElement('span');
-        tag.className = 'tag';
-        tag.textContent = r.kind === 'pending' ? '送信中…' : '登録できませんでした：' + r.error;
-        name.appendChild(tag);
-      }
-
-      const q = document.createElement('span');
-      q.className = 'q';
-      q.textContent = '× ' + r.quantity;
-      item.append(name, q);
-
-      if (r.kind === 'error') {
-        const close = document.createElement('button');
-        close.className = 'word';
-        close.textContent = '閉じる';
-        close.onclick = () => dismissJob(r.requestId);
-        item.appendChild(close);
-      } else if (!r.kind) {
-        // 登録が済んだ注文だけ、編集・削除できる
-        const edit = document.createElement('button');
-        edit.className = 'edit';
-        edit.textContent = '編集';
-        edit.disabled = busy;
-        edit.onclick = () => openEdit(r);
-
-        const del = document.createElement('button');
-        del.className = 'del';
-        del.textContent = '🗑';
-        del.setAttribute('aria-label', '削除');
-        del.disabled = busy;
-        del.onclick = () => askDelete(r);
-
-        item.append(edit, del);
-      }
-      list.appendChild(item);
+    cells.filter(v => v !== code && !/^[\d\-]+$/.test(v)).forEach(name => {
+      const key = supplierKey_(name);
+      if (key && !map[key]) map[key] = code;
     });
   });
+
+  return map;
 }
 
-$('reload').onclick = () => {
-  loadList();
-  loadMaster();
-  processQueue();
-};
-
-/* ---------- GS1 → GTIN ---------- */
-
-function validGTIN(s) {
-  if (!/^\d{13,14}$/.test(s)) return false;
-  const a = [...s].map(Number);
-  const c = a.pop();
-  let sum = 0;
-  for (let i = a.length - 1, j = 0; i >= 0; i--, j++) {
-    sum += a[i] * (j % 2 === 0 ? 3 : 1);
-  }
-  return (10 - sum % 10) % 10 === c;
+/** 卸名の照合キー：ひらがな→カタカナ、全角→半角、空白除去 */
+function supplierKey_(name) {
+  const kata = String(name || '').replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60));
+  return toHalfKana_(kata).replace(/\s+/g, '').toLowerCase();
 }
 
-/** GS1全体（有効期限・ロット等を含む場合も）から (01) のGTINだけを取り出す */
-function extract(raw) {
-  const s = String(raw || '').trim().replace(/^\][A-Za-z0-9]{2}/, '');
-  const m = s.match(/\(01\)(\d{14})/) || s.match(/^01(\d{14})/);
-  const code = m ? m[1] : s;
-  if (!validGTIN(code)) return null;
-  return code.padStart(14, '0');
-}
+/* ---------------- HACCHU1 の行を作る ---------------- */
 
-/* ---------- カメラ ---------- */
+/** 同じ卸・同じ商品（GTIN）は数量を合計する */
+function mergeItems_(rows) {
+  const merged = [];
+  const byKey = {};
 
-async function startCamera() {
-  if (stream) return;
-  try {
-    if (!window.ZXingWASM || !ZXingWASM.readBarcodes) {
-      throw new Error('読み取りの部品を読み込めません。通信状態を確認してください。');
+  rows.forEach(r => {
+    if (!(r.quantity >= 1)) {
+      throw new Error('数量が正しくありません：' + r.name);
     }
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    });
-    const video = $('video');
-    video.srcObject = stream;
-    await video.play();
-    $('camStart').classList.add('hidden');
-    $('camMsg').textContent = master ? '' : 'マスタを読み込んでいます…';
-    timer = setInterval(scanFrame, SCAN_MS);
-  } catch (e) {
-    stopCamera();
-    const denied = e && e.name === 'NotAllowedError';
-    $('camMsg').textContent = denied
-      ? 'カメラの使用が許可されていません'
-      : 'カメラを起動できません：' + e.message;
-    $('camStart').classList.remove('hidden');
-  }
+
+    const key = r.supplier + '|' + r.gtin;
+
+    if (byKey[key]) {
+      byKey[key].quantity += r.quantity;
+    } else {
+      byKey[key] = {
+        supplier: r.supplier, gtin: r.gtin, name: r.name,
+        pack: r.pack, maker: r.maker, quantity: r.quantity
+      };
+      merged.push(byKey[key]);
+    }
+  });
+
+  return merged;
 }
 
-function stopCamera() {
-  if (timer) clearInterval(timer);
-  timer = null;
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-  }
-  $('video').srcObject = null;
+/** 発注履歴の行を卸ごとにまとめる */
+function groupBySupplier_(rows) {
+  const groups = [];
+  const bySupplier = {};
+
+  rows.forEach(r => {
+    if (!bySupplier[r.supplier]) {
+      bySupplier[r.supplier] = { supplier: r.supplier, rows: [] };
+      groups.push(bySupplier[r.supplier]);
+    }
+    bySupplier[r.supplier].rows.push(r);
+  });
+
+  return groups;
 }
 
-/** 画面に映っている範囲（object-fit: cover で切り取られた部分）だけを解析する */
-function visibleArea(video) {
-  const box = video.getBoundingClientRect();
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  const scale = Math.max(box.width / vw, box.height / vh);
-  const w = Math.min(vw, box.width / scale);
-  const h = Math.min(vh, box.height / scale);
-  return { x: (vw - w) / 2, y: (vh - h) / 2, w: w, h: h };
-}
+/** 1行分 [商品コード, 数量, 卸コード]。卸コードが見つからなければエラー */
+function hacchuRow_(it, codes) {
+  const code = codes[supplierKey_(it.supplier)];
 
-async function scanFrame() {
-  if (activeTab !== 'scan' || state !== 'scan' || frameBusy || !stream) return;
-  const video = $('video');
-  if (video.readyState < 2 || !video.videoWidth) return;
-
-  frameBusy = true;
-  try {
-    const area = visibleArea(video);
-    const canvas = $('canvas');
-    const width = Math.round(Math.min(area.w, 1280));
-    canvas.width = width;
-    canvas.height = Math.round(area.h * width / area.w);
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(video, area.x, area.y, area.w, area.h, 0, 0, canvas.width, canvas.height);
-
-    const results = await ZXingWASM.readBarcodes(
-      ctx.getImageData(0, 0, canvas.width, canvas.height),
-      {
-        formats: ['DataBar', 'DataBarLtd', 'DataBarExp', 'DataBarExpStk', 'DataMatrix', 'EAN13'],
-        tryHarder: true,
-        tryInvert: true,
-        maxNumberOfSymbols: 2
-      }
+  if (!code) {
+    throw new Error(
+      '「' + SUPPLIER_CODE_SHEET + '」シートに卸「' + it.supplier + '」の卸コードがありません。' +
+      '追加してから、もう一度発注してください。'
     );
+  }
 
-    for (const r of results) {
-      const gtin = extract(r.text);
-      if (gtin) {
-        onCode(gtin);
-        break;
+  // GTIN14桁の頭の1を除いた13桁（チェックデジットは13桁として付け直す）
+  return [Number(normalizeGtin_(it.gtin).jan13), it.quantity, Number(code)];
+}
+
+/** GS1のチェックデジット */
+function checkDigit_(digits) {
+  let sum = 0;
+  const s = String(digits);
+
+  for (let i = 0; i < s.length; i++) {
+    sum += Number(s[s.length - 1 - i]) * (i % 2 === 0 ? 3 : 1);
+  }
+
+  return String((10 - (sum % 10)) % 10);
+}
+
+/** 13桁(JAN)でも14桁(GTIN)でも受け取り、{jan13, gtin14} にする */
+function normalizeGtin_(value) {
+  const d = String(value || '').replace(/\D/g, '');
+
+  if (d.length === 14) {
+    const body = d.slice(1, 13);
+    return { jan13: body + checkDigit_(body), gtin14: d };
+  }
+
+  if (d.length === 13) {
+    const body = '1' + d.slice(0, 12);
+    return { jan13: d, gtin14: body + checkDigit_(body) };
+  }
+
+  throw new Error('商品コードが13桁・14桁ではありません：' + value);
+}
+
+/* ---------------- 文字の変換 ---------------- */
+
+const HALF_KANA_ = (function () {
+  const map = {};
+  const pairs =
+    'ァｧ ィｨ ゥｩ ェｪ ォｫ ッｯ ャｬ ュｭ ョｮ アｱ イｲ ウｳ エｴ オｵ カｶ キｷ クｸ ケｹ コｺ サｻ シｼ スｽ セｾ ソｿ ' +
+    'タﾀ チﾁ ツﾂ テﾃ トﾄ ナﾅ ニﾆ ヌﾇ ネﾈ ノﾉ ハﾊ ヒﾋ フﾌ ヘﾍ ホﾎ マﾏ ミﾐ ムﾑ メﾒ モﾓ ヤﾔ ユﾕ ヨﾖ ' +
+    'ラﾗ リﾘ ルﾙ レﾚ ロﾛ ワﾜ ヲｦ ンﾝ ・･ 「｢ 」｣ 、､ 。｡ ゛ﾞ ゜ﾟ';
+
+  pairs.split(' ').forEach(p => { map[p[0]] = p[1]; });
+  map['ー'] = 'ｰ';
+
+  const plain = 'カキクケコサシスセソタチツテトハヒフヘホ';
+  const voiced = 'ガギグゲゴザジズゼゾダヂヅデドバビブベボ';
+  const semi = 'パピプペポ';
+
+  for (let i = 0; i < voiced.length; i++) map[voiced[i]] = map[plain[i]] + 'ﾞ';
+  for (let i = 0; i < semi.length; i++) map[semi[i]] = map['ハヒフヘホ'[i]] + 'ﾟ';
+  map['ヴ'] = 'ｳﾞ';
+
+  return map;
+})();
+
+/** 全角の英数字・記号とカタカナを半角にする。漢字・ひらがなはそのまま */
+function toHalfKana_(text) {
+  return String(text || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/　/g, ' ')
+    .replace(/[゛゜ァ-ヴー・「」、。]/g, c => HALF_KANA_[c] || c)
+    .trim();
+}
+
+/** 既存の他の処理から使われているかもしれないので残している（全角英数→半角のみ） */
+function toHalf_(text) {
+  return String(text || '')
+    .replace(/[！-～]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/　/g, ' ');
+}
+
+/* ---------------- Excel作成 ---------------- */
+
+function buildHacchuXlsx_(records, sheetName, fileName) {
+  const n = records.length + 1; // 見出し行を含む
+  const book = SpreadsheetApp.create('tmp_HACCHU1_' + Utilities.getUuid().slice(0, 8));
+  const bookId = book.getId();
+
+  try {
+    const sh = book.getSheets()[0];
+    sh.setName(sheetName);
+
+    if (sh.getMaxRows() > n) sh.deleteRows(n + 1, sh.getMaxRows() - n);
+    if (sh.getMaxColumns() > 3) sh.deleteColumns(4, sh.getMaxColumns() - 3);
+
+    sh.getRange(1, 1, 1, 3).setNumberFormat('@');
+    sh.getRange(2, 1, n - 1, 1).setNumberFormat('0000000000000'); // 商品コード
+    sh.getRange(2, 2, n - 1, 2).setNumberFormat('0');             // 数量・卸コード
+
+    sh.getRange(1, 1, n, 3).setValues([HACCHU_HEADERS].concat(records));
+    SpreadsheetApp.flush();
+
+    const url = 'https://docs.google.com/spreadsheets/d/' + bookId + '/export?format=xlsx';
+
+    for (let i = 0; i < 3; i++) {
+      const res = UrlFetchApp.fetch(url, {
+        headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+        muteHttpExceptions: true
+      });
+      const code = res.getResponseCode();
+
+      if (code === 200) {
+        return res.getBlob().setContentType(XLSX_MIME).setName(fileName);
       }
+      if (code !== 429) throw new Error('Excelファイルを作成できませんでした（' + code + '）。');
+      Utilities.sleep(3000 * (i + 1));
     }
-  } catch (e) {
-    $('camMsg').textContent = '読取エラー：' + e.message;
+
+    throw new Error('Excelの作成が混み合っています。少し待ってから、もう一度発注してください。');
   } finally {
-    frameBusy = false;
+    DriveApp.getFileById(bookId).setTrashed(true);
   }
 }
 
-/** 誤読を防ぐため、同じコードを続けて2回読めたときだけ採用する */
-function onCode(gtin) {
-  if (state !== 'scan') return;
-  const now = Date.now();
+/** 発注履歴と卸別シートの発注状態を「発注済」にする */
+function markOrdered_(ss, hs, group) {
+  group.rows.forEach(r => hs.getRange(r.row, HISTORY_COL.status).setValue(API_STATUS_ORDERED));
 
-  if (gtin === recent.code && now - recent.time < COOLDOWN_MS) return;
+  const sheet = ss.getSheetByName(getSupplierSheetName_(group.supplier));
+  if (!sheet || sheet.getLastRow() < 2) return;
 
-  if (gtin !== firstHit.code || now - firstHit.time > CONFIRM_MS) {
-    firstHit = { code: gtin, time: now };
-    return;
-  }
+  const ids = sheet.getRange(2, SUPPLIER_COL.id, sheet.getLastRow() - 1, 1).getDisplayValues();
+  const targets = new Set(group.rows.map(r => r.id));
 
-  firstHit = { code: '', time: 0 };
-  if (heatRegFor) {
-    handleHeatRegCode(gtin);
-    return;
-  }
-  lookup(gtin);
-}
-
-/** ヒート紐付け中：箱（販売包装）のコードを読んだときの処理 */
-async function handleHeatRegCode(gtin) {
-  const heat = heatRegFor;
-
-  let found;
-  try {
-    found = await findLocal(gtin);
-  } catch (e) {
-    found = { error: e.message };
-  }
-
-  if (!found.product) {
-    vibrate([120, 80, 120]);
-    message('箱のコードとして読み取れませんでした。' +
-      (found.error || '医薬品マスタにないコードです。') +
-      '\n別の箱で試すか、「ヒートの紐付けをやめる」で終了してください。', true);
-    return;
-  }
-
-  try {
-    const r = await api('registerHeat', { heat: heat, gtin: found.product.gtin });
-    heatRegFor = null;
-    $('heatRegBtn').classList.add('hidden');
-    $('heatRegBtn').textContent = 'このヒートを薬に紐付ける';
-    message('');
-    toast('ヒートを登録しました：' + r.name);
-    await loadMaster();
-    lookup(heat);  // 登録したヒートで、そのまま包装の選択へ
-  } catch (e) {
-    message('ヒートを登録できませんでした：' + e.message +
-      '\n別の箱で試すか、「ヒートの紐付けをやめる」で終了してください。', true);
-  }
-}
-
-$('heatRegBtn').onclick = () => {
-  if (heatRegFor) {
-    // 紐付けを中止する
-    heatRegFor = null;
-    $('heatRegBtn').classList.add('hidden');
-    $('heatRegBtn').textContent = 'このヒートを薬に紐付ける';
-    message('');
-    return;
-  }
-  if (!pendingHeat) return;
-
-  heatRegFor = pendingHeat;
-  pendingHeat = null;
-  current = null;
-  qty = '';
-  state = 'scan';
-  $('overlay').className = 'hidden';
-  $('heatRegBtn').textContent = 'ヒートの紐付けをやめる';
-  $('heatRegBtn').classList.remove('hidden');
-  message('同じ薬の「箱」のGS1を読み取ってください。箱のコードで薬を特定します。');
-  vibrate(60);
-  updateView();
-};
-
-/* ---------- 照合・入力・確定 ---------- */
-
-function showOverlay(kind, code, name, sub, supplier) {
-  $('overlay').className = kind === 'ng' ? 'ng' : '';
-  $('pCode').textContent = code;
-  $('pName').textContent = name;
-  $('pSub').textContent = sub;
-  $('pSupplier').textContent = supplier;
-}
-
-function updateView() {
-  $('qty').textContent = state === 'input' && current && current.product ? (qty || '0') : '-';
-  const canInput = state === 'input' && current && current.product;
-  document.querySelectorAll('#keys button[data-digit], #back').forEach(b => {
-    b.disabled = !canInput;
+  ids.forEach((v, i) => {
+    if (targets.has(v[0])) {
+      sheet.getRange(i + 2, SUPPLIER_COL.status).setValue(API_STATUS_ORDERED);
+    }
   });
-  $('cancel').disabled = state === 'scan';
-  $('ok').disabled = !(canInput && qty);
 }
 
-/** ヒート（調剤包装）のコードから、同じ薬の販売包装候補を返す。ヒートでなければ null */
-function heatCandidates(gtin) {
-  const yj = heatMap.get(gtin);
-  if (!yj || !master) return null;
-  const list = [];
-  master.forEach(p => {
-    if (p.yj === yj && p.gtin.charAt(0) === '1') list.push(p);
+/* ---------------- エディタで実行するテスト ---------------- */
+
+function testHacchuXlsx() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const codes = loadSupplierCodes_(ss);
+  const sample = [
+    { supplier: 'モロオ', gtin: '14987954710809', name: 'ゼチーア錠１０ｍｇ',
+      pack: '１０ｍｇ／錠 ＰＴＰ １０錠×１０', maker: 'オルガノン', quantity: 1 },
+    { supplier: 'ほくやく', gtin: '14987387592164', name: 'フェルビナクスチック軟膏３％「三笠」',
+      pack: '３％１ｇ ４０ｇ×１０本 （ポリプロピレン容器）', maker: '三笠製薬', quantity: 1 },
+    { supplier: '寿薬品', gtin: '14987155105121', name: 'トリメブチンマレイン酸塩錠１００ｍｇ「トーワ」',
+      pack: '１００ｍｇ／錠 ＰＴＰ １０錠×１０', maker: '東和薬品', quantity: 2 }
+  ];
+
+  const records = sample.map(it => hacchuRow_(it, codes));
+  const stamp = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyyMMdd_HHmm');
+  const blob = buildHacchuXlsx_(records, HACCHU_SHEET_NAME, 'テスト_' + stamp + '_HACCHU1.xlsx');
+  const file = DriveApp.createFile(blob);
+
+  Logger.log('作成しました：' + file.getUrl());
+  records.forEach(r => Logger.log(r.map(v => JSON.stringify(v)).join(' ')));
+}
+
+function debugIds() {
+  const hs = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(HISTORY_SHEET);
+  const n = Math.min(10, hs.getLastRow() - 1);
+  const vals = hs.getRange(hs.getLastRow() - n + 1, 10, n, 1).getDisplayValues();
+
+  vals.forEach(v => {
+    try {
+      apiId_(v[0]);
+      Logger.log('OK: ' + JSON.stringify(v[0]));
+    } catch (e) {
+      Logger.log('NG: ' + JSON.stringify(v[0]) + ' → ' + e.message);
+    }
   });
-  return { yj: yj, candidates: list };
 }
 
-/** 商品を確定して数量入力に進む */
-function applyProduct(ticket, p, viaHeat) {
-  ticket.product = p;
-  qty = '1';  // 数量は1から
-  qtyTouched = false;
-  showOverlay('', 'GTIN ' + p.gtin, p.name,
-    p.pack + (p.maker ? '　' + p.maker : '') + (viaHeat ? '\n（ヒートのコードから選択）' : ''),
-    '卸：' + p.supplier);
-}
+function fixBadIds() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const hs = ss.getSheetByName(HISTORY_SHEET);
+  const n = hs.getLastRow() - 1;
+  if (n < 1) return;
 
-/** 販売包装が複数あるときの選択画面 */
-function showChoices(ticket, viaHeat) {
-  const first = viaHeat.candidates[0];
-  $('choiceName').textContent = first.name;
-  const list = $('choiceList');
-  list.replaceChildren();
-  viaHeat.candidates.forEach(p => {
-    const b = document.createElement('button');
-    const pack = document.createElement('span');
-    pack.className = 'cp';
-    pack.textContent = p.pack;
-    const sub = document.createElement('span');
-    sub.className = 'cs';
-    sub.textContent = (p.maker ? p.maker + '　' : '') + '卸：' + p.supplier;
-    b.append(pack, sub);
-    b.onclick = () => {
-      if (current !== ticket) return;
-      $('choiceModal').classList.add('hidden');
-      applyProduct(ticket, p, true);
-      updateView();
-    };
-    list.appendChild(b);
-  });
-  showOverlay('', 'GTIN ' + ticket.gtin, first.name, '包装を選んでください', '');
-  $('choiceModal').classList.remove('hidden');
-}
+  const ids = hs.getRange(2, 10, n, 1).getDisplayValues();
+  const suppliers = hs.getRange(2, 2, n, 1).getDisplayValues();
+  let fixed = 0;
 
-async function lookup(gtin) {
-  state = 'input';
-  vibrate(80);
-  const ticket = current = { gtin: gtin, product: null, requestId: uuid() };
-  qty = '';
-  qtyTouched = false;
-  message('');
-  showOverlay('', 'GTIN ' + gtin, '照合しています…', '', '');
-  updateView();
+  ids.forEach((v, i) => {
+    const oldId = v[0];
+    if (!oldId) return;
 
-  let found;
-  try {
-    found = await findLocal(gtin);
-  } catch (e) {
-    found = { error: '照合できませんでした：' + e.message };
-  }
-  if (current !== ticket) return; // 照合中にキャンセルされた
-
-  if (found.notFound) {
-    // ヒート（調剤包装）のコードなら、販売包装の候補から選ばせる
-    const viaHeat = master ? heatCandidates(gtin) : null;
-    if (viaHeat && viaHeat.candidates.length === 1) {
-      applyProduct(ticket, viaHeat.candidates[0], true);
-    } else if (viaHeat && viaHeat.candidates.length > 1) {
-      showChoices(ticket, viaHeat);
-      updateView();
+    try {
+      apiId_(oldId);
       return;
-    } else if (viaHeat) {
-      vibrate([120, 80, 120]);
-      showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
-        'この薬の販売包装が医薬品マスタにありません。', 'キャンセルで次の読み取りに戻ります');
-    } else if (gtin.charAt(0) === '0') {
-      // 0始まり＝ヒート（調剤包装）の可能性が高いが、対応表に未登録
-      pendingHeat = gtin;
-      vibrate([120, 80, 120]);
-      showOverlay('ng', 'GTIN ' + gtin, '未登録のコードです',
-        (heatMap.size === 0
-          ? '調剤包装マスタに登録がまだありません。'
-          : 'このコードは調剤包装マスタに未登録です。') +
-        '\nヒートの場合は、下のボタンで薬に紐付けると次から包装が選べます。' +
-        '\nマスタにない商品は手書きで発注してください。',
-        'キャンセルで次の読み取りに戻ります');
-      $('heatRegBtn').classList.remove('hidden');
-    } else {
-      // マスタにないコード：手書きで発注してもらう
-      vibrate([120, 80, 120]);
-      showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
-        '医薬品マスタに登録がありません。\n手書きで発注してください。', 'キャンセルで次の読み取りに戻ります');
+    } catch (e) {
+      // 不正なIDだけ直す
     }
-  } else if (found.error) {
-    vibrate([120, 80, 120]);
-    showOverlay('ng', 'GTIN ' + gtin, '読み込めません',
-      found.error + '\nキャンセルして読み直してください。', '');
-  } else {
-    applyProduct(ticket, found.product, false);
-  }
-  updateView();
-}
 
-function backToScan() {
-  current = null;
-  qty = '';
-  state = 'scan';
-  pendingHeat = null;
-  $('overlay').className = 'hidden';
-  $('choiceModal').classList.add('hidden');
-  if (!heatRegFor) $('heatRegBtn').classList.add('hidden');
-  updateView();
-}
+    const newId = Utilities.getUuid();
+    hs.getRange(i + 2, 10).setValue(newId);
 
-$('choiceCancel').onclick = () => pressCancel();
-
-function pressDigit(d) {
-  if (state !== 'input' || !current || !current.product) return;
-  if (!qtyTouched) {         // 最初のキーで初期値の1を置き換える
-    qty = '';
-    qtyTouched = true;
-  }
-  if (d === '0' && !qty) return;           // 先頭に0は入れない
-  if (qty.length >= MAX_DIGITS) return;
-  qty += d;
-  updateView();
-}
-
-function pressBack() {
-  if (state !== 'input' || !current || !current.product) return;
-  qtyTouched = true;
-  qty = qty.slice(0, -1);
-  updateView();
-}
-
-function pressCancel() {
-  if (state === 'scan') return;
-  backToScan();
-  message('');
-}
-
-/** 確定：登録は裏側で送り、すぐ次の読み取りに戻る */
-function pressOk() {
-  if (state !== 'input' || !current || !current.product || !qty) return;
-  const p = current.product;
-
-  queue.push({
-    requestId: current.requestId,
-    gtin: p.gtin,
-    quantity: Number(qty),
-    name: p.name,
-    pack: p.pack,
-    supplier: p.supplier,
-    status: 'pending'
-  });
-  saveQueue();
-
-  recent = { code: current.gtin, time: Date.now() };
-  vibrate(60);
-  toast(p.name + ' × ' + qty);
-  backToScan();
-  renderList();
-  processQueue();
-}
-
-/* ---------- タブ ---------- */
-
-function showTab(tab) {
-  activeTab = tab;
-  $('scanPage').classList.toggle('hidden', tab !== 'scan');
-  $('listPage').classList.toggle('hidden', tab !== 'list');
-  $('inputPage').classList.toggle('hidden', tab !== 'input');
-  $('tabScan').classList.toggle('active', tab === 'scan');
-  $('tabList').classList.toggle('active', tab === 'list');
-  $('tabInput').classList.toggle('active', tab === 'input');
-  if (tab === 'list') loadList();
-  if (tab === 'input') renderSearch();
-}
-
-$('tabScan').onclick = () => showTab('scan');
-$('tabList').onclick = () => showTab('list');
-$('tabInput').onclick = () => showTab('input');
-
-/* ---------- 入力タブ（品名検索→数量→注文リスト追加） ---------- */
-
-function normText(s) {
-  return String(s || '').normalize('NFKC').toLowerCase();
-}
-
-let searchTimer = null;
-$('searchInput').addEventListener('input', () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(renderSearch, 200);
-});
-
-/* 五十音キー（押したかなが検索欄に入るキーボード） */
-const KANA_GRID = [
-  ['ア', 'イ', 'ウ', 'エ', 'オ'],
-  ['カ', 'キ', 'ク', 'ケ', 'コ'],
-  ['ガ', 'ギ', 'グ', 'ゲ', 'ゴ'],
-  ['サ', 'シ', 'ス', 'セ', 'ソ'],
-  ['ザ', 'ジ', 'ズ', 'ゼ', 'ゾ'],
-  ['タ', 'チ', 'ツ', 'テ', 'ト'],
-  ['ダ', 'ヂ', 'ヅ', 'デ', 'ド'],
-  ['ナ', 'ニ', 'ヌ', 'ネ', 'ノ'],
-  ['ハ', 'ヒ', 'フ', 'ヘ', 'ホ'],
-  ['バ', 'ビ', 'ブ', 'ベ', 'ボ'],
-  ['パ', 'ピ', 'プ', 'ペ', 'ポ'],
-  ['マ', 'ミ', 'ム', 'メ', 'モ'],
-  ['ヤ', null, 'ユ', null, 'ヨ'],
-  ['ラ', 'リ', 'ル', 'レ', 'ロ'],
-  ['ワ', null, 'ヲ', null, 'ン'],
-  ['ァ', 'ィ', 'ゥ', 'ェ', 'ォ'],
-  ['ッ', 'ャ', 'ュ', 'ョ', 'ー']
-];
-
-/** キーを押すと、検索欄に1文字入る */
-function typeKana(k) {
-  $('searchInput').value += k;
-  renderSearch();
-}
-
-function backKana() {
-  const v = $('searchInput').value;
-  if (!v) return;
-  $('searchInput').value = v.slice(0, -1);
-  renderSearch();
-}
-
-function clearKana() {
-  if (!$('searchInput').value) return;
-  $('searchInput').value = '';
-  renderSearch();
-}
-
-(function buildKanaBar() {
-  const bar = $('kanaBar');
-  const back = document.createElement('button');
-  back.textContent = '⌫ 1文字消す';
-  back.onclick = backKana;
-  const clear = document.createElement('button');
-  clear.textContent = '全て消す';
-  clear.onclick = clearKana;
-  bar.append(back, clear);
-})();
-
-(function buildKanaGrid() {
-  const box = $('kanaGrid');
-  KANA_GRID.forEach(row => {
-    row.forEach(k => {
-      if (!k) {
-        const gap = document.createElement('span');
-        gap.className = 'gap';
-        box.appendChild(gap);
-        return;
-      }
-      const b = document.createElement('button');
-      b.textContent = k;
-      b.onclick = () => typeKana(k);
-      box.appendChild(b);
-    });
-  });
-})();
-
-function renderSearch() {
-  const box = $('searchResults');
-  if (!box) return;
-  box.replaceChildren();
-
-  if (!master) {
-    $('searchInfo').textContent = 'マスタを読み込めていません。通信状態を確認して、画面を開き直してください。';
-    return;
-  }
-
-  const q = normText($('searchInput').value.trim());
-  if (!q) {
-    $('searchInfo').textContent = '下の五十音キーで品名を入力してください（マスタ ' + master.size + ' 件から検索）';
-    return;
-  }
-
-  const hits = [];
-  master.forEach(p => {
-    if (normText(p.name).includes(q) || normText(p.maker).includes(q) ||
-        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q))) {
-      hits.push(p);
+    const sheet = ss.getSheetByName(getSupplierSheetName_(suppliers[i][0]));
+    if (sheet) {
+      sheet.createTextFinder(oldId).matchEntireCell(true).findAll()
+        .forEach(cell => cell.setValue(newId));
     }
+
+    Logger.log('修正: ' + oldId + ' → ' + newId + '（' + suppliers[i][0] + '、発注履歴の' + (i + 2) + '行目）');
+    fixed++;
   });
 
-  $('searchInfo').textContent = hits.length + '件' +
-    (hits.length > 50 ? '（最初の50件を表示しています）' : '');
-
-  hits.slice(0, 50).forEach(p => {
-    const row = document.createElement('div');
-    row.className = 'result';
-    const name = document.createElement('div');
-    name.className = 'rn';
-    name.textContent = p.name;
-    const sub = document.createElement('div');
-    sub.className = 'rs';
-    sub.textContent = p.pack + (p.maker ? '　' + p.maker : '') + '　卸：' + p.supplier;
-    row.append(name, sub);
-    row.onclick = () => openAdd(p);
-    box.appendChild(row);
-  });
+  Logger.log('修正した件数: ' + fixed);
 }
-
-function openAdd(p) {
-  adding = { product: p, qty: '1', touched: false };
-  $('addSupplier').textContent = p.supplier;
-  $('addName').textContent = p.name;
-  $('addPack').textContent = p.pack;
-  $('addMsg').textContent = '';
-  updateAdd();
-  $('addModal').classList.remove('hidden');
-  updateOrderButton();
-}
-
-function closeAdd() {
-  adding = null;
-  $('addModal').classList.add('hidden');
-  updateOrderButton();
-}
-
-function updateAdd() {
-  if (!adding) return;
-  $('addQty').textContent = adding.qty || '0';
-  $('addOk').disabled = !adding.qty;
-}
-
-function addDigit(d) {
-  if (!adding) return;
-  if (!adding.touched) {
-    adding.qty = '';
-    adding.touched = true;
-  }
-  if (d === '0' && !adding.qty) return;
-  if (adding.qty.length >= MAX_DIGITS) return;
-  adding.qty += d;
-  updateAdd();
-}
-
-function addBack() {
-  if (!adding) return;
-  adding.touched = true;
-  adding.qty = adding.qty.slice(0, -1);
-  updateAdd();
-}
-
-/** 追加：スキャンと同じ送信キューに入れるので、登録は裏側で送られる */
-function saveAdd() {
-  if (!adding || !adding.qty) return;
-  const p = adding.product;
-  const quantity = Number(adding.qty);
-
-  queue.push({
-    requestId: uuid(),
-    gtin: p.gtin,
-    quantity: quantity,
-    name: p.name,
-    pack: p.pack,
-    supplier: p.supplier,
-    status: 'pending'
-  });
-  saveQueue();
-
-  closeAdd();
-  vibrate(60);
-  toast(p.name + ' × ' + quantity);
-  renderList();
-  processQueue();
-}
-
-$('addOk').onclick = saveAdd;
-
-/* 追加用のテンキー */
-(function buildAddKeys() {
-  const keys = $('addKeys');
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
-    const b = document.createElement('button');
-    b.textContent = d;
-    b.onclick = () => addDigit(d);
-    keys.appendChild(b);
-  });
-
-  const cancel = document.createElement('button');
-  cancel.className = 'word cancel';
-  cancel.textContent = 'キャンセル';
-  cancel.onclick = closeAdd;
-
-  const zero = document.createElement('button');
-  zero.textContent = '0';
-  zero.onclick = () => addDigit('0');
-
-  const back = document.createElement('button');
-  back.className = 'word';
-  back.textContent = '戻る';
-  back.onclick = addBack;
-
-  keys.append(cancel, zero, back);
-})();
-
-/* ---------- 発注（発注データを作り、取込用フォルダに保存） ---------- */
-
-let ordering = false;
-
-function updateOrderButton() {
-  const waiting = queue.some(j => j.status === 'pending');
-  const changing = busyIds.size > 0 || editing !== null || deleteTarget !== null || adding !== null;
-  $('orderBtn').disabled = ordering || !serverRows.length || waiting || changing;
-  $('orderMsg').textContent = waiting
-    ? '送信中の登録があります。送信が終わると発注できます。'
-    : changing ? '数量の変更・削除が終わると発注できます。' : '';
-}
-
-function openOrder() {
-  if (!serverRows.length) return;
-
-  const suppliers = [];
-  serverRows.forEach(r => { if (!suppliers.includes(r.supplier)) suppliers.push(r.supplier); });
-
-  $('orderTitle').textContent = '発注しますか？';
-  const box = $('orderSummary');
-  box.replaceChildren();
-  suppliers.forEach(s => {
-    const n = serverRows.filter(r => r.supplier === s).length;
-    const line = document.createElement('div');
-    const name = document.createElement('span');
-    name.textContent = s;
-    const count = document.createElement('span');
-    count.textContent = n + '品目';
-    line.append(name, count);
-    box.appendChild(line);
-  });
-  $('orderNote').textContent =
-    '発注データ（Excel）を取込用フォルダに保存します。\n' +
-    '保存した品目は「発注済」になり、注文リストから消えます。';
-  $('orderAsk').classList.remove('hidden');
-  $('orderDone').classList.add('hidden');
-  $('orderModal').classList.remove('hidden');
-}
-
-async function runOrder() {
-  if (ordering) return;
-  ordering = true;
-  const ids = serverRows.map(r => r.id);
-
-  $('orderModal').classList.add('hidden');
-  $('orderBusy').classList.remove('hidden');
-  updateOrderButton();
-
-  let title;
-  let note;
-  const box = $('orderSummary');
-  box.replaceChildren();
-
-  try {
-    const r = await api('order', { ids: ids }, 180000);
-    title = '発注データを作成しました';
-    r.suppliers.forEach(s => {
-      const line = document.createElement('div');
-      const name = document.createElement('span');
-      name.textContent = s.supplier + '（' + s.items + '品目）';
-      const files = document.createElement('span');
-      files.textContent = s.files.join(' ');
-      line.append(name, files);
-      box.appendChild(line);
-    });
-    note = '発注データ（Excel）を取込用フォルダに保存しました。取り込まれたかを確認してください。';
-  } catch (e) {
-    title = '発注できませんでした';
-    note = e.message + (e.retry
-      ? '\n\n通信が途中で切れた可能性があります。もう一度発注する前に、' +
-        '注文リストを更新し、取込用フォルダに発注ファイルが作られていないか確認してください。'
-      : '');
-  } finally {
-    ordering = false;
-    $('orderBusy').classList.add('hidden');
-  }
-
-  $('orderTitle').textContent = title;
-  $('orderNote').textContent = note;
-  $('orderAsk').classList.add('hidden');
-  $('orderDone').classList.remove('hidden');
-  $('orderModal').classList.remove('hidden');
-  loadList();
-}
-
-$('orderBtn').onclick = openOrder;
-$('orderNo').onclick = () => $('orderModal').classList.add('hidden');
-$('orderYes').onclick = runOrder;
-$('orderClose').onclick = () => $('orderModal').classList.add('hidden');
-
-/* ---------- 数量の編集 ---------- */
-
-function openEdit(row) {
-  editing = { row: row, qty: String(row.quantity), touched: false };
-  $('editSupplier').textContent = row.supplier;
-  $('editName').textContent = row.name;
-  $('editPack').textContent = row.pack;
-  $('editNow').textContent = row.quantity;
-  $('editMsg').textContent = '';
-  updateEdit();
-  $('editModal').classList.remove('hidden');
-  updateOrderButton();
-}
-
-function closeEdit() {
-  editing = null;
-  $('editModal').classList.add('hidden');
-  updateOrderButton();
-}
-
-function updateEdit() {
-  if (!editing) return;
-  $('editQty').textContent = editing.qty || '0';
-  $('editOk').disabled = !editing.qty || Number(editing.qty) === editing.row.quantity;
-}
-
-function editDigit(d) {
-  if (!editing) return;
-  if (!editing.touched) {     // 最初のキーで今の数量を置き換える
-    editing.qty = '';
-    editing.touched = true;
-  }
-  if (d === '0' && !editing.qty) return;
-  if (editing.qty.length >= MAX_DIGITS) return;
-  editing.qty += d;
-  updateEdit();
-}
-
-function editBack() {
-  if (!editing) return;
-  editing.touched = true;
-  editing.qty = editing.qty.slice(0, -1);
-  updateEdit();
-}
-
-async function saveEdit() {
-  if (!editing || !editing.qty) return;
-  const row = editing.row;
-  const quantity = Number(editing.qty);
-
-  $('editOk').disabled = true;
-  $('editMsg').textContent = '';
-  $('editOk').textContent = '変更しています…';
-  busyIds.add(row.id);
-  renderList();
-
-  try {
-    const r = await api('updateQuantity', { id: row.id, quantity: quantity });
-    serverRows.forEach(x => { if (x.id === row.id) x.quantity = r.quantity; });
-    closeEdit();
-    toast(row.name + ' を ' + r.quantity + ' に変更しました');
-  } catch (e) {
-    $('editMsg').textContent = '変更できませんでした：' + e.message;
-    $('editOk').disabled = false;
-    if (/リストを更新/.test(e.message)) loadList();
-  } finally {
-    $('editOk').textContent = '変更する';
-    busyIds.delete(row.id);
-    renderList();
-  }
-}
-
-/* ---------- 削除（シート上は「取消」にする） ---------- */
-
-let deleteTarget = null;
-
-function askDelete(row) {
-  deleteTarget = row;
-  $('confirmText').textContent = row.name + '　' + row.pack + ' × ' + row.quantity +
-    ' を注文リストから外しますか？';
-  $('confirmModal').classList.remove('hidden');
-  updateOrderButton();
-}
-
-$('confirmNo').onclick = () => {
-  deleteTarget = null;
-  $('confirmModal').classList.add('hidden');
-  updateOrderButton();
-};
-
-$('confirmYes').onclick = async () => {
-  const row = deleteTarget;
-  deleteTarget = null;
-  $('confirmModal').classList.add('hidden');
-  if (!row) return;
-
-  busyIds.add(row.id);
-  renderList();
-  try {
-    await api('cancel', { id: row.id });
-    serverRows = serverRows.filter(x => x.id !== row.id);
-    toast(row.name + ' を外しました');
-  } catch (e) {
-    toast('外せませんでした：' + e.message, true);
-    if (/リストを更新/.test(e.message)) loadList();
-  } finally {
-    busyIds.delete(row.id);
-    renderList();
-  }
-};
-
-/* テンキーを作る */
-(function buildKeys() {
-  const keys = $('keys');
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
-    const b = document.createElement('button');
-    b.textContent = d;
-    b.dataset.digit = d;
-    b.onclick = () => pressDigit(d);
-    keys.appendChild(b);
-  });
-
-  const cancel = document.createElement('button');
-  cancel.id = 'cancel';
-  cancel.className = 'word cancel';
-  cancel.textContent = 'キャンセル';
-  cancel.onclick = pressCancel;
-
-  const zero = document.createElement('button');
-  zero.textContent = '0';
-  zero.dataset.digit = '0';
-  zero.onclick = () => pressDigit('0');
-
-  const back = document.createElement('button');
-  back.id = 'back';
-  back.className = 'word';
-  back.textContent = '戻る';
-  back.onclick = pressBack;
-
-  keys.append(cancel, zero, back);
-})();
-
-/* 編集用のテンキー */
-(function buildEditKeys() {
-  const keys = $('editKeys');
-  ['1', '2', '3', '4', '5', '6', '7', '8', '9'].forEach(d => {
-    const b = document.createElement('button');
-    b.textContent = d;
-    b.onclick = () => editDigit(d);
-    keys.appendChild(b);
-  });
-
-  const cancel = document.createElement('button');
-  cancel.className = 'word cancel';
-  cancel.textContent = 'キャンセル';
-  cancel.onclick = closeEdit;
-
-  const zero = document.createElement('button');
-  zero.textContent = '0';
-  zero.onclick = () => editDigit('0');
-
-  const back = document.createElement('button');
-  back.className = 'word';
-  back.textContent = '戻る';
-  back.onclick = editBack;
-
-  keys.append(cancel, zero, back);
-})();
-
-$('editOk').onclick = saveEdit;
-$('ok').onclick = pressOk;
-$('camStart').onclick = startCamera;
-
-/* 画面を離れたらカメラを止め、戻ったら再開する */
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    stopCamera();
-  } else {
-    startCamera();
-    processQueue();
-  }
-});
-window.addEventListener('pagehide', stopCamera);
-window.addEventListener('online', processQueue);
-
-/* 起動 */
-function startup() {
-  loadMaster();
-  loadList();
-  renderList();
-  processQueue();  // 前回送れなかった登録があれば続きから送る
-}
-
-updateView();
-renderList();
-if (!storageGet(PASS_KEY)) {
-  showPass();
-} else {
-  startup();
-}
-setInterval(loadMaster, MASTER_REFRESH_MS);
-startCamera();
-</script>
-</body>
-</html>
