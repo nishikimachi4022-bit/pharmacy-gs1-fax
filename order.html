@@ -65,7 +65,7 @@ main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
 .kanaGrid button{height:46px;font-size:19px;padding:0}
 .kanaGrid button.active{background:#2563eb;color:#fff;border:0}
 .kanaGrid .gap{visibility:hidden}
-#kanaBar{margin-top:6px}
+#kanaBar{margin-top:6px;display:flex;gap:6px}
 #kanaBar button{height:44px;padding:0 16px;font-size:15px}
 #addName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
 #addQty{font-size:36px;font-weight:bold}
@@ -197,8 +197,8 @@ button:disabled{opacity:.35}
 <main>
   <nav class="tabs">
     <button id="tabScan" class="active">スキャン</button>
-    <button id="tabList">注文リスト</button>
     <button id="tabInput">入力</button>
+    <button id="tabList">注文リスト</button>
   </nav>
 
   <div id="listPage" class="hidden">
@@ -216,8 +216,8 @@ button:disabled{opacity:.35}
   <div id="inputPage" class="hidden">
     <section class="card">
       <div style="font-weight:bold">品名で検索して追加</div>
-      <div class="sub">バーコードがないとき用です。医薬品マスタから検索して、注文リストに追加します。五十音キーでも探せます。</div>
-      <input id="searchInput" type="search" placeholder="品名・メーカー・コードで検索" autocomplete="off">
+      <div class="sub">バーコードがないとき用です。下の五十音キーで品名を入力して検索し、注文リストに追加します。</div>
+      <input id="searchInput" type="text" placeholder="下の五十音キーで入力" autocomplete="off" readonly>
       <div class="kanaGrid" id="kanaGrid"></div>
       <div id="kanaBar"></div>
       <div id="searchInfo" class="sub" style="margin-top:6px"></div>
@@ -1108,67 +1108,56 @@ $('searchInput').addEventListener('input', () => {
   searchTimer = setTimeout(renderSearch, 200);
 });
 
-/* 五十音キー（表の形で全て表示し、押したかなが頭文字になる） */
+/* 五十音キー（押したかなが検索欄に入るキーボード） */
 const KANA_GRID = [
   ['ア', 'イ', 'ウ', 'エ', 'オ'],
   ['カ', 'キ', 'ク', 'ケ', 'コ'],
+  ['ガ', 'ギ', 'グ', 'ゲ', 'ゴ'],
   ['サ', 'シ', 'ス', 'セ', 'ソ'],
+  ['ザ', 'ジ', 'ズ', 'ゼ', 'ゾ'],
   ['タ', 'チ', 'ツ', 'テ', 'ト'],
+  ['ダ', 'ヂ', 'ヅ', 'デ', 'ド'],
   ['ナ', 'ニ', 'ヌ', 'ネ', 'ノ'],
   ['ハ', 'ヒ', 'フ', 'ヘ', 'ホ'],
+  ['バ', 'ビ', 'ブ', 'ベ', 'ボ'],
+  ['パ', 'ピ', 'プ', 'ペ', 'ポ'],
   ['マ', 'ミ', 'ム', 'メ', 'モ'],
   ['ヤ', null, 'ユ', null, 'ヨ'],
   ['ラ', 'リ', 'ル', 'レ', 'ロ'],
-  ['ワ', null, 'ヲ', null, 'ン']
+  ['ワ', null, 'ヲ', null, 'ン'],
+  ['ァ', 'ィ', 'ゥ', 'ェ', 'ォ'],
+  ['ッ', 'ャ', 'ュ', 'ョ', 'ー']
 ];
-let kanaFilter = null;   // 選択中の頭文字（カタカナ）
 
-/** ひらがな→カタカナ。それ以外はそのまま */
-function toKatakana(ch) {
-  const c = ch.charCodeAt(0);
-  return (c >= 0x3041 && c <= 0x3093) ? String.fromCharCode(c + 0x60) : ch;
-}
-
-/* 濁音・半濁音は、同じ子音の清音にそろえる（ガ→カ、ジ→シ、パ→ハ など） */
-const DAKUTEN_MAP = {
-  'ガ': 'カ', 'ギ': 'キ', 'グ': 'ク', 'ゲ': 'ケ', 'ゴ': 'コ',
-  'ザ': 'サ', 'ジ': 'シ', 'ズ': 'ス', 'ゼ': 'セ', 'ゾ': 'ソ',
-  'ダ': 'タ', 'ヂ': 'チ', 'ヅ': 'ツ', 'デ': 'テ', 'ド': 'ト',
-  'バ': 'ハ', 'ビ': 'ヒ', 'ブ': 'フ', 'ベ': 'ヘ', 'ボ': 'ホ',
-  'パ': 'ハ', 'ピ': 'ヒ', 'プ': 'フ', 'ペ': 'ヘ', 'ポ': 'ホ',
-  'ァ': 'ア', 'ィ': 'イ', 'ゥ': 'ウ', 'ェ': 'エ', 'ォ': 'オ',
-  'ッ': 'ツ', 'ャ': 'ヤ', 'ュ': 'ユ', 'ョ': 'ヨ', 'ヮ': 'ワ',
-  'ヴ': 'ウ'
-};
-
-function baseKana(ch) {
-  return DAKUTEN_MAP[ch] || ch;
-}
-
-/** 品名の頭文字（カタカナ＋清音にそろえる） */
-function initialOf(name) {
-  const n = normText(name);
-  return n ? baseKana(toKatakana(n.charAt(0))) : '';
-}
-
-function selectKana(k) {
-  kanaFilter = (kanaFilter === k) ? null : k;
-  document.querySelectorAll('#kanaGrid button').forEach(b => {
-    b.classList.toggle('active', b.dataset.kana === kanaFilter);
-  });
-  renderKanaBar();
+/** キーを押すと、検索欄に1文字入る */
+function typeKana(k) {
+  $('searchInput').value += k;
   renderSearch();
 }
 
-function renderKanaBar() {
-  const bar = $('kanaBar');
-  bar.replaceChildren();
-  if (!kanaFilter) return;
-  const clear = document.createElement('button');
-  clear.textContent = '頭文字「' + kanaFilter + '」を解除';
-  clear.onclick = () => selectKana(kanaFilter);
-  bar.appendChild(clear);
+function backKana() {
+  const v = $('searchInput').value;
+  if (!v) return;
+  $('searchInput').value = v.slice(0, -1);
+  renderSearch();
 }
+
+function clearKana() {
+  if (!$('searchInput').value) return;
+  $('searchInput').value = '';
+  renderSearch();
+}
+
+(function buildKanaBar() {
+  const bar = $('kanaBar');
+  const back = document.createElement('button');
+  back.textContent = '⌫ 1文字消す';
+  back.onclick = backKana;
+  const clear = document.createElement('button');
+  clear.textContent = '全て消す';
+  clear.onclick = clearKana;
+  bar.append(back, clear);
+})();
 
 (function buildKanaGrid() {
   const box = $('kanaGrid');
@@ -1182,8 +1171,7 @@ function renderKanaBar() {
       }
       const b = document.createElement('button');
       b.textContent = k;
-      b.dataset.kana = k;
-      b.onclick = () => selectKana(k);
+      b.onclick = () => typeKana(k);
       box.appendChild(b);
     });
   });
@@ -1200,20 +1188,20 @@ function renderSearch() {
   }
 
   const q = normText($('searchInput').value.trim());
-  if (!q && !kanaFilter) {
-    $('searchInfo').textContent = '品名の一部を入力するか、五十音キーで頭文字を選んでください（マスタ ' + master.size + ' 件）';
+  if (!q) {
+    $('searchInfo').textContent = '下の五十音キーで品名を入力してください（マスタ ' + master.size + ' 件から検索）';
     return;
   }
 
   const hits = [];
   master.forEach(p => {
-    if (kanaFilter && initialOf(p.name) !== kanaFilter) return;
-    if (q && !(normText(p.name).includes(q) || normText(p.maker).includes(q) ||
-        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q)))) return;
-    hits.push(p);
+    if (normText(p.name).includes(q) || normText(p.maker).includes(q) ||
+        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q))) {
+      hits.push(p);
+    }
   });
 
-  $('searchInfo').textContent = (kanaFilter ? '頭文字「' + kanaFilter + '」 ' : '') + hits.length + '件' +
+  $('searchInfo').textContent = hits.length + '件' +
     (hits.length > 50 ? '（最初の50件を表示しています）' : '');
 
   hits.slice(0, 50).forEach(p => {
