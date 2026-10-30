@@ -61,6 +61,12 @@ main{max-width:640px;margin:0 auto;padding:8px 10px 20px}
 .result{padding:10px 0;border-top:1px solid #e5eaf0;cursor:pointer}
 .result .rn{font-weight:bold;overflow-wrap:anywhere}
 .result .rs{font-size:13px;color:#5b6b7a;overflow-wrap:anywhere}
+.kanaRows{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px}
+.kanaRows button{height:52px;font-size:20px}
+.kanaRows button.active{background:#2563eb;color:#fff;border:0}
+#kanaSubs{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+#kanaSubs button{height:48px;min-width:52px;font-size:20px;padding:0 8px}
+#kanaSubs button.active{background:#2563eb;color:#fff;border:0}
 #addName{font-size:17px;font-weight:bold;overflow-wrap:anywhere}
 #addQty{font-size:36px;font-weight:bold}
 #addOk{width:100%;height:68px;margin-top:8px;background:#16a17f;color:#fff;font-size:24px}
@@ -210,8 +216,10 @@ button:disabled{opacity:.35}
   <div id="inputPage" class="hidden">
     <section class="card">
       <div style="font-weight:bold">品名で検索して追加</div>
-      <div class="sub">バーコードがないとき用です。医薬品マスタから検索して、注文リストに追加します。</div>
+      <div class="sub">バーコードがないとき用です。医薬品マスタから検索して、注文リストに追加します。五十音キーでも探せます。</div>
       <input id="searchInput" type="search" placeholder="品名・メーカー・コードで検索" autocomplete="off">
+      <div class="kanaRows" id="kanaRows"></div>
+      <div id="kanaSubs"></div>
       <div id="searchInfo" class="sub" style="margin-top:6px"></div>
       <div id="searchResults"></div>
     </section>
@@ -554,6 +562,11 @@ async function processQueue() {
     // 画面に出した内容と、登録時のマスタが違っていたら知らせる
     if (r.name !== job.name || r.pack !== job.pack || r.supplier !== job.supplier) {
       toast('マスタが変更されていました。登録内容：' + r.name + ' ' + r.pack + '（' + r.supplier + '）', true);
+    }
+
+    // 同じ商品が未発注で残っていた場合は、数量が置き換わったことを知らせる
+    if (r.replaced) {
+      toast(job.name + ' は注文リストにあったため、数量を ' + r.quantity + ' に置き換えました');
     }
   } catch (e) {
     if (e.retry) {
@@ -1095,6 +1108,82 @@ $('searchInput').addEventListener('input', () => {
   searchTimer = setTimeout(renderSearch, 200);
 });
 
+/* 五十音キー（行を選ぶと、その行のかなが出る） */
+const KANA_ROWS = [
+  ['ア', ['ア', 'イ', 'ウ', 'エ', 'オ']],
+  ['カ', ['カ', 'キ', 'ク', 'ケ', 'コ', 'ガ', 'ギ', 'グ', 'ゲ', 'ゴ']],
+  ['サ', ['サ', 'シ', 'ス', 'セ', 'ソ', 'ザ', 'ジ', 'ズ', 'ゼ', 'ゾ']],
+  ['タ', ['タ', 'チ', 'ツ', 'テ', 'ト', 'ダ', 'ヂ', 'ヅ', 'デ', 'ド']],
+  ['ナ', ['ナ', 'ニ', 'ヌ', 'ネ', 'ノ']],
+  ['ハ', ['ハ', 'ヒ', 'フ', 'ヘ', 'ホ', 'バ', 'ビ', 'ブ', 'ベ', 'ボ', 'パ', 'ピ', 'プ', 'ペ', 'ポ']],
+  ['マ', ['マ', 'ミ', 'ム', 'メ', 'モ']],
+  ['ヤ', ['ヤ', 'ユ', 'ヨ']],
+  ['ラ', ['ラ', 'リ', 'ル', 'レ', 'ロ']],
+  ['ワ', ['ワ', 'ヲ', 'ン']]
+];
+let kanaRow = null;      // 選択中の行
+let kanaFilter = null;   // 選択中の頭文字（カタカナ）
+
+/** ひらがな→カタカナ。それ以外はそのまま */
+function toKatakana(ch) {
+  const c = ch.charCodeAt(0);
+  return (c >= 0x3041 && c <= 0x3093) ? String.fromCharCode(c + 0x60) : ch;
+}
+
+/** 品名の頭文字（カタカナにそろえる） */
+function initialOf(name) {
+  const n = normText(name);
+  return n ? toKatakana(n.charAt(0)) : '';
+}
+
+function renderKanaSubs() {
+  const box = $('kanaSubs');
+  box.replaceChildren();
+  document.querySelectorAll('#kanaRows button').forEach(b => {
+    b.classList.toggle('active', b.dataset.row === kanaRow);
+  });
+  if (!kanaRow) return;
+
+  const row = KANA_ROWS.find(r => r[0] === kanaRow);
+  row[1].forEach(k => {
+    const b = document.createElement('button');
+    b.textContent = k;
+    b.className = k === kanaFilter ? 'active' : '';
+    b.onclick = () => {
+      kanaFilter = (kanaFilter === k) ? null : k;
+      renderKanaSubs();
+      renderSearch();
+    };
+    box.appendChild(b);
+  });
+
+  if (kanaFilter) {
+    const clear = document.createElement('button');
+    clear.textContent = '解除';
+    clear.className = 'word';
+    clear.onclick = () => {
+      kanaFilter = null;
+      renderKanaSubs();
+      renderSearch();
+    };
+    box.appendChild(clear);
+  }
+}
+
+(function buildKanaRows() {
+  const box = $('kanaRows');
+  KANA_ROWS.forEach(r => {
+    const b = document.createElement('button');
+    b.textContent = r[0];
+    b.dataset.row = r[0];
+    b.onclick = () => {
+      kanaRow = (kanaRow === r[0]) ? null : r[0];
+      renderKanaSubs();
+    };
+    box.appendChild(b);
+  });
+})();
+
 function renderSearch() {
   const box = $('searchResults');
   if (!box) return;
@@ -1106,20 +1195,20 @@ function renderSearch() {
   }
 
   const q = normText($('searchInput').value.trim());
-  if (!q) {
-    $('searchInfo').textContent = '品名の一部を入力してください（マスタ ' + master.size + ' 件から検索）';
+  if (!q && !kanaFilter) {
+    $('searchInfo').textContent = '品名の一部を入力するか、五十音キーで頭文字を選んでください（マスタ ' + master.size + ' 件）';
     return;
   }
 
   const hits = [];
   master.forEach(p => {
-    if (normText(p.name).includes(q) || normText(p.maker).includes(q) ||
-        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q))) {
-      hits.push(p);
-    }
+    if (kanaFilter && initialOf(p.name) !== kanaFilter) return;
+    if (q && !(normText(p.name).includes(q) || normText(p.maker).includes(q) ||
+        p.gtin.includes(q) || (p.yj && p.yj.toLowerCase().includes(q)))) return;
+    hits.push(p);
   });
 
-  $('searchInfo').textContent = hits.length + '件' +
+  $('searchInfo').textContent = (kanaFilter ? '頭文字「' + kanaFilter + '」 ' : '') + hits.length + '件' +
     (hits.length > 50 ? '（最初の50件を表示しています）' : '');
 
   hits.slice(0, 50).forEach(p => {
@@ -1238,7 +1327,7 @@ let ordering = false;
 
 function updateOrderButton() {
   const waiting = queue.some(j => j.status === 'pending');
-  const changing = busyIds.size > 0 || editing !== null || deleteTarget !== null;
+  const changing = busyIds.size > 0 || editing !== null || deleteTarget !== null || adding !== null;
   $('orderBtn').disabled = ordering || !serverRows.length || waiting || changing;
   $('orderMsg').textContent = waiting
     ? '送信中の登録があります。送信が終わると発注できます。'
