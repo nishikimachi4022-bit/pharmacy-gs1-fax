@@ -161,12 +161,23 @@ button:disabled{opacity:.35}
 /* 包装の選択（ヒートを読み取ったとき） */
 #choiceList{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 #choiceList button{
- height:auto;min-height:56px;padding:10px 12px;
+ height:auto;min-height:64px;padding:12px 14px;
  font-size:16px;text-align:left;background:#e8eef4;
  display:flex;flex-direction:column;gap:2px;
+ border:2px solid transparent;border-radius:12px;
 }
-#choiceList button .cp{font-weight:bold}
-#choiceList button .cs{font-size:13px;color:#41586c;font-weight:normal}
+#choiceList button .cp{font-weight:bold;font-size:21px;line-height:1.35}
+#choiceList button .cs{font-size:14px;color:#41586c;font-weight:normal}
+#choiceList button .tag{
+ align-self:flex-start;font-size:12px;font-weight:bold;
+ padding:2px 8px;border-radius:99px;color:#fff;
+}
+/* ヒート包装は青、バラ包装は赤 */
+#choiceList button.packHeat{background:#dbeafe;border-color:#2563eb}
+#choiceList button.packHeat .tag{background:#2563eb}
+#choiceList button.packBara{background:#fee2e2;border-color:#dc2626}
+#choiceList button.packBara .tag{background:#dc2626}
+#choiceList button.packBara .cs{color:#7f1d1d}
 
 /* 合言葉 */
 #passScreen{
@@ -909,6 +920,31 @@ function updateView() {
   $('ok').disabled = !(canInput && qty);
 }
 
+/** バラ包装かどうか（包装規格に「バラ」を含むもの） */
+function isBaraPack_(p) {
+  return String(p.pack || '').normalize('NFKC').includes('バラ');
+}
+
+/** 包装規格から総量の目安を取り出す（「10錠×10」→100、「2.5g×42包」→105）。取れなければ null */
+function packTotal_(pack) {
+  const s = String(pack || '').normalize('NFKC');
+  const m = s.match(/(\d+(?:\.\d+)?)\s*(?:錠|カプセル|包|本|枚|個|缶|瓶|袋|管|シート|g|mg|mL|L)?\s*×\s*(\d+(?:\.\d+)?)/);
+  if (m) return parseFloat(m[1]) * parseFloat(m[2]);
+  const single = s.match(/(\d+(?:\.\d+)?)\s*(?:錠|カプセル|包|本|枚|個|缶|瓶|袋|管)/);
+  return single ? parseFloat(single[1]) : null;
+}
+
+/** 包装の候補を、少ないものから順に並べ替える。バラ包装は必ず最後にする */
+function sortPackChoices_(list) {
+  return list
+    .map((p, i) => ({ p: p, i: i, bara: isBaraPack_(p), total: packTotal_(p.pack) }))
+    .sort((a, b) =>
+      (a.bara === b.bara ? 0 : a.bara ? 1 : -1) ||
+      ((a.total == null ? Infinity : a.total) - (b.total == null ? Infinity : b.total)) ||
+      (a.i - b.i))
+    .map(x => x.p);
+}
+
 /** ヒート（調剤包装）のコードから、同じ薬の販売包装候補を返す。ヒートでなければ null */
 function heatCandidates(gtin) {
   const yj = heatMap.get(gtin);
@@ -917,7 +953,7 @@ function heatCandidates(gtin) {
   master.forEach(p => {
     if (p.yj === yj && p.gtin.charAt(0) === '1') list.push(p);
   });
-  return { yj: yj, candidates: list };
+  return { yj: yj, candidates: sortPackChoices_(list) };
 }
 
 /** 商品を確定して数量入力に進む */
@@ -938,6 +974,15 @@ function showChoices(ticket, viaHeat) {
   list.replaceChildren();
   viaHeat.candidates.forEach(p => {
     const b = document.createElement('button');
+    const bara = isBaraPack_(p);
+    b.className = bara ? 'packBara' : 'packHeat';
+    // ヒート（PTP）とバラには目印のラベルも付ける
+    if (bara || String(p.pack || '').normalize('NFKC').includes('PTP')) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = bara ? 'バラ' : 'ヒート';
+      b.appendChild(tag);
+    }
     const pack = document.createElement('span');
     pack.className = 'cp';
     pack.textContent = p.pack;
