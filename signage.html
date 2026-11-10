@@ -123,7 +123,7 @@
   .bus-panel{background:var(--card);border:2px solid var(--line-border);border-radius:20px;padding:.9em 1.2em 1em;display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .dir-chip{align-self:flex-start;color:#fff;font-family:"M PLUS Rounded 1c",sans-serif;font-weight:900;font-size:calc(clamp(18px,2.1vw,36px) * var(--pf,1));padding:.32em .85em;border-radius:10px;box-shadow:0 4px 12px rgba(0,0,0,.18);letter-spacing:.02em}
   .dir-up{background:#E67E22}.dir-down{background:#2980B9}
-  .bus-name{margin-top:.6em;font-weight:900;font-size:calc(clamp(18px,2vw,34px) * var(--pf,1));line-height:1.4;min-height:3.3em}
+  .bus-name{margin-top:.6em;font-weight:900;font-size:calc(clamp(18px,2vw,34px) * var(--pf,1));line-height:1.4;min-height:2.75em}
   .bus-name small{display:block;font-size:.75em;color:var(--muted);font-weight:700;margin-top:.2em}
   /* 行き先は一段下げて枠で囲み、路線名と区別して見やすくする */
   .bus-dest{display:inline-block;margin-top:.3em;border:3px solid var(--ink);border-radius:12px;background:var(--yellow-soft);padding:.08em .5em;font-size:1.12em;line-height:1.35;letter-spacing:.02em}
@@ -133,14 +133,16 @@
   .bus-rem{font-weight:900;color:#D35400;font-size:calc(clamp(20px,2.35vw,40px) * var(--pf,1));margin-left:auto;text-align:right;white-space:nowrap}
   .bus-rem b{font-family:"M PLUS Rounded 1c",sans-serif;font-size:1.9em;line-height:1;margin-right:.05em}
   /* 次のバスの行は流さず固定表示。行の左端に「次のバス」の枠ラベルを置き、
-     路線・行き先、時刻の順に並べる。括弧書きの補足は付けず、1段に収める */
-  .bus-next{margin-top:.5em;color:var(--ink);font-weight:900;font-size:calc(clamp(17px,1.85vw,33px) * var(--pf,1));line-height:1.4;border-top:2px dashed var(--line-border);padding-top:.5em;min-height:1.9em;display:flex;align-items:center}
-  .bus-next-text{display:flex;align-items:center;gap:.5em;width:100%;min-width:0;white-space:nowrap}
+     その隣に時刻、続いて路線・行き先（〇〇 行）の順に並べる。
+     括弧書きの補足は付けず、1段に収める。長くて枠をはみ出すときは
+     文字を縮小せず、右端で見切れる形にする（利用者の指定） */
+  .bus-next{margin-top:.5em;color:var(--ink);font-weight:900;font-size:calc(clamp(20px,2.3vw,44px) * var(--pf,1));line-height:1.4;border-top:2px dashed var(--line-border);padding-top:.5em;min-height:1.9em;display:flex;align-items:center}
+  .bus-next-text{display:flex;align-items:center;gap:.5em;width:100%;min-width:0;white-space:nowrap;overflow:hidden}
   /* 「次のバス」ラベル：文字だけではなく、太枠＋黄色地の箱で囲って見出しとして見せる */
   .bus-next-text .next-label{flex:none;border:3px solid var(--ink);border-radius:10px;background:var(--yellow-soft);padding:.04em .42em;font-size:.92em;line-height:1.32;letter-spacing:.02em}
-  .bus-next-text .next-name{flex:1 1 auto;min-width:0}
-  /* 時刻は行の右端に寄せ、暖色で目立たせる */
-  .bus-next-text .next-time{flex:none;margin-left:auto;color:var(--hot)}
+  .bus-next-text .next-name{flex:1 1 auto;min-width:0;overflow:hidden}
+  /* 時刻はラベルの隣に置き、暖色で目立たせる */
+  .bus-next-text .next-time{flex:none;color:var(--hot)}
   /* 枠内の配置（レイアウト調整モードでパネルごとに切り替え） */
   .bus-panel.arr-name-c .bus-name{text-align:center}
   .bus-panel.arr-name-c .dir-chip{align-self:center}
@@ -221,6 +223,9 @@
   .stage.editing [data-font].selected{outline:3px solid var(--blue);outline-offset:3px;box-shadow:0 0 0 5px rgba(37,99,168,.18)}
   /* 吹き出しは絶対配置のままドラッグできるようにする（上の position:relative を打ち消す） */
   .stage.editing .bus-speech[data-layout]{position:absolute}
+  /* 編集モードではパネルのはみ出しを隠さずに表示する。文字を大きくした結果
+     「次のバス」の行などがパネル下端で見切れても、見えたままクリックして選べるようにするため */
+  .stage.editing .bus-panel{overflow:visible}
   .editor-handle{position:absolute;z-index:70;width:30px;height:30px;border-radius:8px;background:var(--blue);color:#fff;border:2px solid #fff;box-shadow:0 4px 14px rgba(0,0,0,.28);display:none;place-items:center;font-size:15px;line-height:1;cursor:nwse-resize;touch-action:none;padding:0}
   .stage.editing .editor-handle.visible{display:grid}
   .editor-bar{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:65;width:min(1060px,96%);display:none;background:var(--card);color:var(--ink);border:2px solid var(--line-border);border-radius:16px;box-shadow:var(--shadow);padding:10px 12px;gap:10px;align-items:center;flex-wrap:wrap}
@@ -784,23 +789,11 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
   /* 次のバスの行は流さず固定表示：内容をそのまま差し替えるだけ。
-     長い文章はCSS側で折り返して枠内に全文を表示する */
+     長い文章は文字を縮小せず、枠の右端で見切れる形にする */
   function setNextText(span, html){
     if (span._baseHTML === html) return;
     span._baseHTML = html;
     span.innerHTML = html;
-  }
-  /* 次のバスの行が1段で枠内に収まるよう、はみ出すときだけ文字を少しずつ小さくする */
-  function fitNextText(span){
-    if (!span) return;
-    span.style.fontSize = '';
-    if (!span.textContent || !span.clientWidth) return;
-    var size = parseFloat(window.getComputedStyle(span).fontSize) || 0;
-    var guard = 0;
-    while (span.scrollWidth > span.clientWidth + 1 && size > 12 && guard < 40){
-      size -= 1; guard++;
-      span.style.fontSize = size + 'px';
-    }
   }
   function renderBus(prefix, list){
     var nameEl = document.getElementById('bus'+prefix+'Name'),
@@ -836,17 +829,17 @@
     if (parts.sub){ var s = document.createElement('small'); s.textContent = parts.sub; nameEl.appendChild(s); }
     timeEl.textContent = fmtMin(b.mins); timeEl.classList.remove('end');
     remNum.textContent = b.diff; remBox.style.display = '';
-    /* 次のバスの行：左端に枠で囲った「次のバス」ラベルを置き、路線・行き先、時刻の順に並べる。
-       時刻だけを暖色（.next-time）にして目立たせる。
+    /* 次のバスの行：左端に枠で囲った「次のバス」ラベル、その隣に時刻、
+       続いて路線・行き先（〇〇 行）の順に並べる。時刻は暖色（.next-time）で目立たせる。
+       長くて枠をはみ出すときは右端で見切れてよい（文字の自動縮小はしない）。
        「（手宮先回り 経由）」のような括弧書きの補足は行が2段になる原因になるため、
        この行では splitBusName で切り分けた補足側を表示から外す */
     if (list[1]){
       var n = list[1];
       var nMain = splitBusName(n.name).main.replace(/　/g, ' ');
-      setNextText(nextEl, '<span class="next-label">次のバス</span><span class="next-name">' + escapeHtml(nMain) + '</span><span class="next-time">' + fmtMin(n.mins) + '</span>');
+      setNextText(nextEl, '<span class="next-label">次のバス</span><span class="next-time">' + fmtMin(n.mins) + '</span><span class="next-name">' + escapeHtml(nMain) + '</span>');
     }
     else { setNextText(nextEl, 'この便が本日の最終です'); }
-    fitNextText(nextEl);
   }
   function updateBus(){
     var now = new Date();
