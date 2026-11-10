@@ -131,11 +131,15 @@
   .bus-time.end{font-size:clamp(42px,5vw,86px);color:#B9B0A2;letter-spacing:.04em}
   .bus-rem{font-weight:900;color:#D35400;font-size:clamp(20px,2.35vw,40px);margin-left:auto;text-align:right;white-space:nowrap}
   .bus-rem b{font-family:"M PLUS Rounded 1c",sans-serif;font-size:1.9em;line-height:1;margin-right:.05em}
-  /* 「つぎは」は流さず固定表示。長い行き先でも全文が枠内に収まるよう折り返しを許可する */
-  .bus-next{margin-top:.5em;color:var(--ink);font-weight:900;font-size:clamp(18px,2.05vw,35px);line-height:1.45;border-top:2px dashed var(--line-border);padding-top:.5em;min-height:1.45em}
-  .bus-next-text{display:inline}
-  /* 「つぎは」行の中で、時刻の部分だけを暖色で目立たせる */
-  .bus-next-text .next-time{color:var(--hot)}
+  /* 次のバスの行は流さず固定表示。行の左端に「次のバス」の枠ラベルを置き、
+     路線・行き先、時刻の順に並べる。括弧書きの補足は付けず、1段に収める */
+  .bus-next{margin-top:.5em;color:var(--ink);font-weight:900;font-size:clamp(17px,1.85vw,33px);line-height:1.4;border-top:2px dashed var(--line-border);padding-top:.5em;min-height:1.9em;display:flex;align-items:center}
+  .bus-next-text{display:flex;align-items:center;gap:.5em;width:100%;min-width:0;white-space:nowrap}
+  /* 「次のバス」ラベル：文字だけではなく、太枠＋黄色地の箱で囲って見出しとして見せる */
+  .bus-next-text .next-label{flex:none;border:3px solid var(--ink);border-radius:10px;background:var(--yellow-soft);padding:.04em .42em;font-size:.92em;line-height:1.32;letter-spacing:.02em}
+  .bus-next-text .next-name{flex:1 1 auto;min-width:0}
+  /* 時刻は行の右端に寄せ、暖色で目立たせる */
+  .bus-next-text .next-time{flex:none;margin-left:auto;color:var(--hot)}
   /* Bus ticker — lives in the bottom band (former control-bar space), just above the footer controls, so it never overlaps the panels */
   .stage-ticker{display:none;position:relative;overflow:hidden;flex:none;margin:0 2.6% 10px;background:var(--ticker-bg);border:2px solid var(--ticker-line);border-radius:14px;height:clamp(52px,4.6vw,80px);z-index:5}
   .stage-ticker.visible{display:block}
@@ -732,12 +736,24 @@
   function escapeHtml(s){
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
-  /* 「つぎは」は流さず固定表示：内容をそのまま差し替えるだけ。
+  /* 次のバスの行は流さず固定表示：内容をそのまま差し替えるだけ。
      長い文章はCSS側で折り返して枠内に全文を表示する */
   function setNextText(span, html){
     if (span._baseHTML === html) return;
     span._baseHTML = html;
     span.innerHTML = html;
+  }
+  /* 次のバスの行が1段で枠内に収まるよう、はみ出すときだけ文字を少しずつ小さくする */
+  function fitNextText(span){
+    if (!span) return;
+    span.style.fontSize = '';
+    if (!span.textContent || !span.clientWidth) return;
+    var size = parseFloat(window.getComputedStyle(span).fontSize) || 0;
+    var guard = 0;
+    while (span.scrollWidth > span.clientWidth + 1 && size > 12 && guard < 40){
+      size -= 1; guard++;
+      span.style.fontSize = size + 'px';
+    }
   }
   function renderBus(prefix, list){
     var nameEl = document.getElementById('bus'+prefix+'Name'),
@@ -773,9 +789,17 @@
     if (parts.sub){ var s = document.createElement('small'); s.textContent = parts.sub; nameEl.appendChild(s); }
     timeEl.textContent = fmtMin(b.mins); timeEl.classList.remove('end');
     remNum.textContent = b.diff; remBox.style.display = '';
-    /* 「つぎは」の行では時刻の部分だけを暖色（.next-time）にして目立たせる */
-    if (list[1]){ var n = list[1]; setNextText(nextEl, 'つぎは <span class="next-time">' + fmtMin(n.mins) + '</span>　' + escapeHtml(n.name)); }
+    /* 次のバスの行：左端に枠で囲った「次のバス」ラベルを置き、路線・行き先、時刻の順に並べる。
+       時刻だけを暖色（.next-time）にして目立たせる。
+       「（手宮先回り 経由）」のような括弧書きの補足は行が2段になる原因になるため、
+       この行では splitBusName で切り分けた補足側を表示から外す */
+    if (list[1]){
+      var n = list[1];
+      var nMain = splitBusName(n.name).main.replace(/　/g, ' ');
+      setNextText(nextEl, '<span class="next-label">次のバス</span><span class="next-name">' + escapeHtml(nMain) + '</span><span class="next-time">' + fmtMin(n.mins) + '</span>');
+    }
     else { setNextText(nextEl, 'この便が本日の最終です'); }
+    fitNextText(nextEl);
   }
   function updateBus(){
     var now = new Date();
