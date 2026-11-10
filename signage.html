@@ -144,17 +144,18 @@
   /* 次のバスの行：行の左端に「次のバス」の枠ラベルを置き、その隣に時刻、
      続いて路線・行き先（〇〇 行）の順に並べる。括弧書きの補足は付けず、1段に収める。
      ラベルと時刻は固定したまま、路線名が枠に収まらないときだけ路線名の文字が
-     左右にスライドして全文が読めるようにする（文字の自動縮小はしない） */
+     右から左へ流れ続けて全文が読めるようにする（文字の自動縮小はしない） */
   .bus-next{margin-top:.5em;color:var(--ink);font-weight:900;font-size:calc(clamp(20px,2.3vw,44px) * var(--pf,1));line-height:1.4;border-top:2px dashed var(--line-border);padding-top:.5em;min-height:1.9em;display:flex;align-items:center}
   .bus-next-text{display:flex;align-items:center;gap:.5em;width:100%;min-width:0;white-space:nowrap;overflow:hidden}
   /* 「次のバス」ラベル：文字だけではなく、太枠＋黄色地の箱で囲って見出しとして見せる */
   .bus-next-text .next-label{flex:none;border:3px solid var(--ink);border-radius:10px;background:var(--yellow-soft);padding:.04em .42em;font-size:.92em;line-height:1.32;letter-spacing:.02em}
   .bus-next-text .next-name{flex:1 1 auto;min-width:0;overflow:hidden}
-  /* 路線名だけをスライドさせるための内側の文字。枠に収まらない場合にだけ .sliding が付く。
-     両端で少し止まってから往復するので、行き先の頭と末尾の両方が読める */
+  /* 路線名だけを流すための内側の文字。枠に収まらない場合にだけ .sliding が付く。
+     テロップ（時刻は目安です）と同じ動きで、右端の外から現れて左へ流れ続け、
+     左端の外へ消えたらまた右から現れるループにする（左右の往復はしない） */
   .bus-next-text .next-name-inner{display:inline-block;white-space:nowrap;will-change:transform}
-  .bus-next-text .next-name-inner.sliding{animation:nextNameSlide var(--slide-dur,9s) ease-in-out infinite alternate}
-  @keyframes nextNameSlide{0%,16%{transform:translateX(0)}84%,100%{transform:translateX(var(--slide-dist,0px))}}
+  .bus-next-text .next-name-inner.sliding{animation:nextNameFlow var(--slide-dur,10s) linear infinite}
+  @keyframes nextNameFlow{from{transform:translateX(var(--slide-from,0px))}to{transform:translateX(var(--slide-to,0px))}}
   @media (prefers-reduced-motion: reduce){ .bus-next-text .next-name-inner.sliding{animation:none} }
   /* 時刻はラベルの隣に置き、暖色で目立たせる */
   .bus-next-text .next-time{flex:none;color:var(--hot)}
@@ -804,33 +805,39 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
   /* 次のバスの行：内容をそのまま差し替える。「次のバス」ラベルと時刻は固定で、
-     路線名が枠に収まらないときだけ路線名が左右にスライドする（fitNextRow） */
+     路線名が枠に収まらないときだけ路線名が右から左へ流れ続ける（fitNextRow） */
   function setNextText(span, html){
     if (span._baseHTML === html) return;
     span._baseHTML = html;
     span.innerHTML = html;
   }
-  /* 路線名のはみ出し量を測り、収まらない場合にだけスライドを付ける。
-     はみ出し量が前回と同じならアニメーションは再開させない（30秒ごとの再計算で
-     位置が飛ばないように）。動きを減らす設定ではスライドさせず見切れのままにする */
+  /* 路線名のはみ出し量を測り、収まらない場合にだけ右から左への流れを付ける。
+     はみ出し量と枠の幅が前回と同じならアニメーションは再開させない（30秒ごとの再計算で
+     位置が飛ばないように）。動きを減らす設定では流さず見切れのままにする */
   var nextReduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function fitNextRow(span){
     if (!span) return;
     var name = span.querySelector('.next-name');
     var inner = name ? name.querySelector('.next-name-inner') : null;
     if (!inner) return;
-    var overflow = inner.offsetWidth - name.clientWidth;
+    var viewW = name.clientWidth;
+    var overflow = inner.offsetWidth - viewW;
     if (nextReduceMotion || overflow <= 6){
-      if (inner.classList.contains('sliding')){ inner.classList.remove('sliding'); inner._slideDist = 0; }
+      if (inner.classList.contains('sliding')){ inner.classList.remove('sliding'); inner._slideDist = 0; inner._slideView = 0; }
       return;
     }
-    if (inner.classList.contains('sliding') && inner._slideDist === overflow) return;
+    if (inner.classList.contains('sliding') && inner._slideDist === overflow && inner._slideView === viewW) return;
     inner.classList.remove('sliding');
-    inner.style.setProperty('--slide-dist', (-overflow) + 'px');
-    /* はみ出し量に応じて約30px/秒のゆっくりした速さになるよう時間を決める */
-    var dur = Math.max(6, Math.min(22, (overflow / 30) / 0.68));
+    /* テロップと同じ等速の流れ：右端の外（枠の幅ぶん右）から現れ、
+       文字全体が左端の外へ消える位置まで進んだら、また右から現れる。
+       移動量は「枠の幅＋文字の幅」 */
+    inner.style.setProperty('--slide-from', viewW + 'px');
+    inner.style.setProperty('--slide-to', (-inner.offsetWidth) + 'px');
+    var travel = viewW + inner.offsetWidth;
+    var dur = Math.max(5, Math.min(30, travel / 55));
     inner.style.setProperty('--slide-dur', dur.toFixed(2) + 's');
     inner._slideDist = overflow;
+    inner._slideView = viewW;
     void inner.offsetWidth;
     inner.classList.add('sliding');
   }
@@ -885,9 +892,9 @@
     remNum.textContent = b.diff; remBox.style.display = '';
     /* 次のバスの行：左端に枠で囲った「次のバス」ラベル、その隣に時刻、
        続いて路線・行き先（〇〇 行）の順に並べる。時刻は暖色（.next-time）で目立たせる。
-       ラベルと時刻は固定で、路線名が枠に収まらないときだけ路線名が左右にスライドして
-       全文が読める（文字の自動縮小はしない）。路線名は .next-name-inner で包み、
-       fitNextRow がはみ出しを測ってスライドを付ける。
+       ラベルと時刻は固定で、路線名が枠に収まらないときだけ路線名が右から左へ
+       流れ続けて全文が読める（文字の自動縮小はしない）。路線名は .next-name-inner で包み、
+       fitNextRow がはみ出しを測って流れを付ける。
        「（手宮先回り 経由）」のような括弧書きの補足は行が2段になる原因になるため、
        この行では splitBusName で切り分けた補足側を表示から外す */
     if (list[1]){
