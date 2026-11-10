@@ -131,6 +131,11 @@
   .bus-name small{display:block;font-size:.75em;color:var(--muted);font-weight:700;margin-top:.2em}
   /* 行き先は一段下げて枠で囲み、路線名と区別して見やすくする */
   .bus-dest{display:inline-block;margin-top:.3em;border:3px solid var(--ink);border-radius:12px;background:var(--yellow-soft);padding:.08em .5em;font-size:1.12em;line-height:1.35;letter-spacing:.02em}
+  /* 行き先ブロックと括弧書きの補足（例：（手宮先回り 経由））を同じ段に横並びにする行：
+     補足はブロックの右隣に置く */
+  .bus-dest-row{display:flex;align-items:center;gap:.55em;flex-wrap:wrap}
+  .bus-dest-row .bus-dest{margin-top:0}
+  .bus-note{font-size:.78em;color:var(--muted);font-weight:700;line-height:1.4}
   .bus-time-row{margin-top:auto;display:flex;align-items:baseline;gap:.5em;flex-wrap:nowrap}
   .bus-time{font-family:"M PLUS Rounded 1c",sans-serif;font-weight:900;font-size:calc(clamp(84px,10.4vw,182px) * var(--pf,1));line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
   .bus-time.end{font-size:calc(clamp(42px,5vw,86px) * var(--pf,1));color:#B9B0A2;letter-spacing:.04em}
@@ -859,12 +864,23 @@
     nameEl.appendChild(document.createTextNode(routeLabel));
     if (destLabel){
       nameEl.appendChild(document.createElement('br'));
+      /* 行き先ブロックと括弧書きの補足を横並びにする行：補足はブロックの右隣に置く */
+      var rowEl = document.createElement('span');
+      rowEl.className = 'bus-dest-row';
+      rowEl.style.display = 'flex';
       var dEl = document.createElement('span');
       dEl.className = 'bus-dest';
       dEl.textContent = destLabel;
-      nameEl.appendChild(dEl);
+      rowEl.appendChild(dEl);
+      if (parts.sub){
+        var noteEl = document.createElement('span');
+        noteEl.className = 'bus-note';
+        noteEl.textContent = parts.sub;
+        rowEl.appendChild(noteEl);
+      }
+      nameEl.appendChild(rowEl);
     }
-    if (parts.sub){ var s = document.createElement('small'); s.textContent = parts.sub; nameEl.appendChild(s); }
+    else if (parts.sub){ var s = document.createElement('small'); s.textContent = parts.sub; nameEl.appendChild(s); }
     timeEl.textContent = fmtMin(b.mins); timeEl.classList.remove('end');
     remNum.textContent = b.diff; remBox.style.display = '';
     /* 次のバスの行：左端に枠で囲った「次のバス」ラベル、その隣に時刻、
